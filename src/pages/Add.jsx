@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { saveDailyAnalyticsRecord } from '../api/analyticsApi';
+import { saveAddCalculationRun, saveDailyAnalyticsRecord } from '../api/analyticsApi';
 
 const Add = () => {
   const [entries, setEntries] = useState([]);
@@ -165,7 +165,7 @@ const Add = () => {
     await fetchEntriesForDate();
   };
 
-  const handleCalculate = async () => {
+  const handleFetchAndCalculate = async () => {
     setView('score');
     setResilienceScore(null);
     setScoreDetails(null);
@@ -189,23 +189,30 @@ const Add = () => {
     setShowScoreSteps(false);
 
     if (score !== null && escapeMinutes !== undefined) {
-      const incidents = getRabbitHoleIncidents(data);
-      setRabbitHoleIncidents(incidents.length);
-      setRabbitHoleDetails(incidents);
-      const result = await saveDailyAnalyticsRecord({
+      const rabbitHole = getRabbitHoleCount(data);
+      const baseRecord = {
         date: selectedDate,
         resilienceScore: score,
         rabbitHole: incidents.length,
         averageEscapeTime: escapeMinutes,
         source: 'mockapi',
         rawPayload: data,
-      });
+      };
 
-      setSaveMessage(
-        result.source === 'supabase'
-          ? 'Saved to analytics history and synced to Supabase.'
-          : 'Saved to analytics history locally.'
-      );
+      const [dailyResult, runResult] = await Promise.all([
+        saveDailyAnalyticsRecord(baseRecord),
+        saveAddCalculationRun(baseRecord),
+      ]);
+
+      if (dailyResult.source === 'supabase' && runResult.success) {
+        setSaveMessage('Fetched, calculated, and auto-saved to Supabase.');
+      } else if (dailyResult.source === 'supabase' && !runResult.success) {
+        setSaveMessage('Score saved to Supabase, but run history table save failed.');
+      } else if (dailyResult.source !== 'supabase' && runResult.success) {
+        setSaveMessage('Run history saved to Supabase; daily analytics stayed local.');
+      } else {
+        setSaveMessage('Fetched and calculated, but saved locally (Supabase not available).');
+      }
     } else {
       setSaveMessage('Calculation finished, but there was not enough data to save analytics.');
     }
@@ -461,7 +468,7 @@ const Add = () => {
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '24px' }}>
           <button
             type="button"
-            onClick={handleCalculate}
+            onClick={handleFetchAndCalculate}
             disabled={loading}
             style={{
               padding: '12px 24px',
@@ -480,7 +487,7 @@ const Add = () => {
             onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
             onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
           >
-            {loading ? 'Loading...' : 'Calculate'}
+            {loading ? 'Loading...' : 'Fetch & Calculate'}
           </button>
         </div>
       </div>

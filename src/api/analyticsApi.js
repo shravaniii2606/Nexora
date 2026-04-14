@@ -150,3 +150,51 @@ export const saveDailyAnalyticsRecord = async (record) => {
     return { success: true, source: 'local' };
   }
 };
+
+export const saveAddCalculationRun = async (run) => {
+  if (!hasSupabaseConfig) {
+    return { success: false, source: 'local', reason: 'missing_config' };
+  }
+
+  try {
+    const payload = {
+      user_id: ANALYTICS_USER_ID,
+      entry_date: run.date,
+      resilience_score: run.resilienceScore,
+      rabbit_hole: run.rabbitHole ?? 0,
+      average_escape_time: run.averageEscapeTime,
+      source: run.source || 'mockapi',
+      raw_payload: run.rawPayload ?? null,
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/add_calculation_runs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      return {
+        success: false,
+        source: 'supabase',
+        reason: `insert_failed:${response.status}`,
+        details: body,
+      };
+    }
+
+    return { success: true, source: 'supabase' };
+  } catch (error) {
+    return {
+      success: false,
+      source: 'supabase',
+      reason: 'network_or_runtime_error',
+      details: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
