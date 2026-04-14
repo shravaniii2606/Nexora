@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarDays, Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-react';
 
 const metrics = [
   {
@@ -179,6 +179,73 @@ const escapeTimeBreakdown = [
   },
 ];
 
+const appUsageDates = [
+  '2026-03-27',
+  '2026-03-29',
+  '2026-03-30',
+  '2026-04-02',
+  '2026-04-03',
+  '2026-04-06',
+  '2026-04-07',
+  '2026-04-08',
+  '2026-04-09',
+  '2026-04-10',
+  '2026-04-11',
+  '2026-04-12',
+  '2026-04-13',
+  '2026-04-14',
+  '2026-04-18',
+  '2026-04-19',
+  '2026-05-02',
+  '2026-05-03',
+  '2026-05-04',
+];
+
+const monthNames = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const parseDateKey = (dateKey) => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const getDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getMonthDays = (year, month) => {
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+
+  for (let index = 0; index < firstDay.getDay(); index += 1) {
+    cells.push(null);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(new Date(year, month, day));
+  }
+
+  return cells;
+};
+
 const getStartMinutes = (timeRange) => {
   const [start] = timeRange.split(' - ');
   const [time, meridiem] = start.split(' ');
@@ -227,16 +294,31 @@ const Dashboard = () => {
   const [showResilienceOverview, setShowResilienceOverview] = useState(false);
   const [showRabbitHoleOverview, setShowRabbitHoleOverview] = useState(false);
   const [showEscapeTimeOverview, setShowEscapeTimeOverview] = useState(false);
+  const [showStreakOverview, setShowStreakOverview] = useState(false);
   const [activeEscapeSlice, setActiveEscapeSlice] = useState(escapeTimeBreakdown[0].label);
   const [hoveredEscapeSlice, setHoveredEscapeSlice] = useState(null);
+  const [showCalendarPicker, setShowCalendarPicker] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(3);
+  const [selectedYear, setSelectedYear] = useState(2026);
   const resilienceSectionRef = useRef(null);
   const rabbitHoleSectionRef = useRef(null);
   const escapeTimeSectionRef = useRef(null);
+  const streakSectionRef = useRef(null);
+  const usageDateSet = useMemo(() => new Set(appUsageDates), []);
   const sortedResilienceBreakdown = [...resilienceBreakdown].sort(
     (first, second) => getStartMinutes(first.time) - getStartMinutes(second.time)
   );
   const sortedRabbitHoleBreakdown = [...rabbitHoleBreakdown].sort(
     (first, second) => getStartMinutes(first.time) - getStartMinutes(second.time)
+  );
+  const calendarDays = useMemo(() => getMonthDays(selectedYear, selectedMonth), [selectedMonth, selectedYear]);
+  const visibleUsageDates = useMemo(
+    () =>
+      appUsageDates.filter((dateKey) => {
+        const date = parseDateKey(dateKey);
+        return date.getFullYear() === selectedYear && date.getMonth() === selectedMonth;
+      }),
+    [selectedMonth, selectedYear]
   );
 
   useEffect(() => {
@@ -256,6 +338,12 @@ const Dashboard = () => {
       escapeTimeSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [showEscapeTimeOverview]);
+
+  useEffect(() => {
+    if (showStreakOverview && streakSectionRef.current) {
+      streakSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [showStreakOverview]);
 
   const handleResilienceClick = () => {
     setShowResilienceOverview(true);
@@ -278,6 +366,13 @@ const Dashboard = () => {
     }
   };
 
+  const handleStreakClick = () => {
+    setShowStreakOverview(true);
+    if (streakSectionRef.current) {
+      streakSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   const activeEscapeSegment =
     escapeTimeBreakdown.find((segment) => segment.label === activeEscapeSlice) ?? escapeTimeBreakdown[0];
   const highlightedEscapeLabel = hoveredEscapeSlice ?? activeEscapeSegment.label;
@@ -296,7 +391,8 @@ const Dashboard = () => {
           const isResilienceCard = title === 'Reciliance Score';
           const isRabbitHoleCard = title === 'Rabbit Holes';
           const isEscapeTimeCard = title === 'Average Escape Time';
-          const isClickable = isResilienceCard || isRabbitHoleCard || isEscapeTimeCard;
+          const isStreakCard = title === 'Streaks';
+          const isClickable = isResilienceCard || isRabbitHoleCard || isEscapeTimeCard || isStreakCard;
 
           const handleClick = isResilienceCard
             ? handleResilienceClick
@@ -304,6 +400,8 @@ const Dashboard = () => {
               ? handleRabbitHoleClick
               : isEscapeTimeCard
                 ? handleEscapeTimeClick
+                : isStreakCard
+                  ? handleStreakClick
                 : undefined;
 
           return (
@@ -339,6 +437,11 @@ const Dashboard = () => {
                 {isEscapeTimeCard && (
                   <p className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-nexora-accent">
                     Tap to view escape time analysis
+                  </p>
+                )}
+                {isStreakCard && (
+                  <p className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-nexora-accent">
+                    Tap to view streak calendar
                   </p>
                 )}
               </button>
@@ -527,15 +630,10 @@ const Dashboard = () => {
                   </svg>
 
                   <div className="absolute flex h-36 w-36 flex-col items-center justify-center rounded-full border border-nexora-border bg-nexora-panel text-center shadow-panel">
-                    <span className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Selected</span>
-                    <span className="mt-2 text-xl font-semibold text-nexora-text">{highlightedEscapeSegment.label}</span>
-                    <span className="mt-1 text-sm text-nexora-muted">{highlightedEscapeSegment.minutes} min</span>
+                    <span className="text-xl font-semibold text-nexora-text">{highlightedEscapeSegment.label}</span>
+                    <span className="mt-2 text-sm text-nexora-muted">{highlightedEscapeSegment.minutes} min</span>
                   </div>
                 </div>
-
-                <p className="mt-6 text-center text-sm text-nexora-muted">
-                  Hover a slice to preview it, then click to keep it selected.
-                </p>
               </div>
 
               <div className="grid gap-3">
@@ -572,6 +670,153 @@ const Dashboard = () => {
             <p className="max-w-md text-sm text-nexora-muted">
               Click the <span className="text-nexora-accent">Average Escape Time</span> card above to open the
               pie-chart view and calculation steps below the rabbit-hole section.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section
+        ref={streakSectionRef}
+        className="panel mt-6 rounded-2xl"
+      >
+        <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-sm font-medium text-nexora-muted">Streak Calendar</p>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">
+              App usage and consecutive streak days
+            </h2>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Current Streak</p>
+              <p className="mt-1 text-3xl font-semibold text-nexora-accent">9 days</p>
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowCalendarPicker((current) => !current)}
+                className="flex h-12 w-12 items-center justify-center rounded-2xl border border-nexora-border bg-[#202024] text-nexora-accent transition hover:border-nexora-accent/60"
+              >
+                <CalendarDays size={20} />
+              </button>
+
+              {showCalendarPicker && (
+                <div className="absolute right-0 top-14 z-10 w-64 rounded-2xl border border-nexora-border bg-[#202024] p-4 shadow-panel">
+                  <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Choose Month</p>
+                  <div className="mt-4 grid gap-3">
+                    <select
+                      value={selectedMonth}
+                      onChange={(event) => setSelectedMonth(Number(event.target.value))}
+                      className="rounded-xl border border-nexora-border bg-[#19191c] px-4 py-3 text-sm text-nexora-text outline-none"
+                    >
+                      {monthNames.map((monthName, index) => (
+                        <option key={monthName} value={index}>
+                          {monthName}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={selectedYear}
+                      onChange={(event) => setSelectedYear(Number(event.target.value))}
+                      className="rounded-xl border border-nexora-border bg-[#19191c] px-4 py-3 text-sm text-nexora-text outline-none"
+                    >
+                      {[2025, 2026, 2027].map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {showStreakOverview ? (
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="rounded-2xl border border-nexora-border bg-[#202024] p-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-nexora-muted">Viewing</p>
+                  <h3 className="mt-1 text-xl font-semibold text-nexora-text">
+                    {monthNames[selectedMonth]} {selectedYear}
+                  </h3>
+                </div>
+                <div className="flex items-center gap-3 text-xs uppercase tracking-[0.16em] text-nexora-muted">
+                  <span className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full bg-[#4e7145] shadow-[0_0_10px_rgba(78,113,69,0.55)]" />
+                    Used
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full border border-[#ff5100] bg-[rgba(255,81,0,0.18)]" />
+                    Not used
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-7 gap-3">
+                {weekdayLabels.map((label) => (
+                  <div key={label} className="pb-2 text-center text-xs font-medium uppercase tracking-[0.16em] text-nexora-muted">
+                    {label}
+                  </div>
+                ))}
+
+                {calendarDays.map((date, index) => {
+                  if (!date) {
+                    return <div key={`blank-${index}`} className="h-12 rounded-xl bg-transparent" />;
+                  }
+
+                  const dateKey = getDateKey(date);
+                  const isUsageDay = usageDateSet.has(dateKey);
+
+                  return (
+                    <div
+                      key={dateKey}
+                      className={`flex h-12 items-center justify-center rounded-xl border text-sm font-semibold transition ${
+                        isUsageDay
+                          ? 'border-[#4e7145] bg-[rgba(78,113,69,0.22)] text-[#dff2d6] shadow-[0_0_16px_rgba(78,113,69,0.32)]'
+                          : 'border-[#ff5100] bg-[rgba(255,81,0,0.16)] text-[#ff8a00]'
+                      }`}
+                    >
+                      {date.getDate()}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
+                <p className="text-sm font-medium text-nexora-muted">Tracked Days</p>
+                <p className="mt-3 text-3xl font-semibold text-nexora-text">{visibleUsageDates.length}</p>
+                <p className="mt-2 text-sm text-nexora-muted">
+                  Days in this month where app activity matches the resilience, rabbit-hole, and escape-time views.
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
+                <p className="text-sm font-medium text-nexora-muted">Active Streak Window</p>
+                <p className="mt-3 text-lg font-semibold text-nexora-text">April 6 - April 14</p>
+                <p className="mt-2 text-sm text-nexora-muted">
+                  This 9-day run is highlighted on the calendar and lines up with the current dashboard streak card.
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
+                <p className="text-sm font-medium text-nexora-muted">Next Streak Milestone</p>
+                <p className="mt-3 text-lg font-semibold text-nexora-text">1 more day to reach 10</p>
+                <p className="mt-2 text-sm text-nexora-muted">
+                  If the app is used on the next active day, the current run will move from 9 to 10 consecutive days.
+                </p>
+              </article>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
+            <p className="max-w-md text-sm text-nexora-muted">
+              Click the <span className="text-nexora-accent">Streaks</span> card above to open the monthly calendar
+              below the escape-time section.
             </p>
           </div>
         )}
