@@ -207,11 +207,17 @@ const Add = () => {
       if (dailyResult.source === 'supabase' && runResult.success) {
         setSaveMessage('Fetched, calculated, and auto-saved to Supabase.');
       } else if (dailyResult.source === 'supabase' && !runResult.success) {
-        setSaveMessage('Score saved to Supabase, but run history table save failed.');
+        setSaveMessage(
+          `Score saved to Supabase, but run history table save failed (${runResult.reason || 'unknown_reason'}).`
+        );
       } else if (dailyResult.source !== 'supabase' && runResult.success) {
-        setSaveMessage('Run history saved to Supabase; daily analytics stayed local.');
+        setSaveMessage(
+          `Run history saved to Supabase; daily analytics stayed local (${dailyResult.reason || 'unknown_reason'}).`
+        );
       } else {
-        setSaveMessage('Fetched and calculated, but saved locally (Supabase not available).');
+        setSaveMessage(
+          `Fetched and calculated, but saved locally (${dailyResult.reason || runResult.reason || 'supabase_unavailable'}).`
+        );
       }
     } else {
       setSaveMessage('Calculation finished, but there was not enough data to save analytics.');

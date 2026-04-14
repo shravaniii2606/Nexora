@@ -166,6 +166,15 @@ const normalizeHistory = (history = []) =>
     }))
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+const flattenAllEntries = (history = []) =>
+  history.flatMap((day) =>
+    (Array.isArray(day.rawPayload) ? day.rawPayload : []).map((entry, index) => ({
+      ...entry,
+      analyticsDate: day.date,
+      analyticsRecordId: `${day.date || 'unknown'}-${entry.id || index}`,
+    }))
+  );
+
 const buildMetrics = (history) => {
   if (history.length === 0) {
     return [
@@ -177,43 +186,40 @@ const buildMetrics = (history) => {
   }
 
   const latest = history[history.length - 1];
-  const previous = history[history.length - 2];
-  const resilienceDelta = previous ? latest.resilienceScore - previous.resilienceScore : 0;
-  const rabbitDelta = previous ? latest.rabbitHole - previous.rabbitHole : 0;
-  const escapeDelta = previous ? latest.averageEscapeTime - previous.averageEscapeTime : 0;
-  const streakDelta = previous ? latest.streaks - previous.streaks : 0;
+  const totalDays = history.length;
+  const average = (values) =>
+    values.length
+      ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+      : 0;
+  const avgResilience = average(history.map((item) => item.resilienceScore));
+  const totalRabbitHoles = history.reduce((sum, item) => sum + item.rabbitHole, 0);
+  const avgEscapeTime = average(history.map((item) => item.averageEscapeTime));
+  const currentStreak = getCurrentStreak(history);
+  const bestResilience = Math.max(...history.map((item) => item.resilienceScore));
 
   return [
     {
       title: 'Resilience Score',
-      value: `${latest.resilienceScore}`,
-      detail: previous
-        ? `${resilienceDelta > 0 ? '+' : ''}${resilienceDelta} vs previous saved day`
-        : `Latest score from ${latest.date}`,
+      value: `${avgResilience}`,
+      detail: `Average across ${totalDays} saved day${totalDays === 1 ? '' : 's'}`,
       icon: ShieldCheck,
     },
     {
       title: 'Rabbit Holes',
-      value: `${latest.rabbitHole}`,
-      detail: previous
-        ? `${rabbitDelta > 0 ? '+' : ''}${rabbitDelta} vs previous saved day`
-        : `Latest count from ${latest.date}`,
+      value: `${totalRabbitHoles}`,
+      detail: `Total incidents across ${totalDays} saved day${totalDays === 1 ? '' : 's'}`,
       icon: Orbit,
     },
     {
       title: 'Average Escape Time',
-      value: `${latest.averageEscapeTime} min`,
-      detail: previous
-        ? `${escapeDelta > 0 ? '+' : ''}${escapeDelta} min vs previous saved day`
-        : `Latest average from ${latest.date}`,
+      value: `${avgEscapeTime} min`,
+      detail: `Average across ${totalDays} saved day${totalDays === 1 ? '' : 's'}`,
       icon: TimerReset,
     },
     {
       title: 'Streaks',
-      value: `${latest.streaks} days`,
-      detail: previous
-        ? `${streakDelta > 0 ? '+' : ''}${streakDelta} days vs previous saved day`
-        : `Latest streak from ${latest.date}`,
+      value: `${currentStreak} days`,
+      detail: `Latest saved day ${latest.date} | Best resilience ${bestResilience}`,
       icon: Flame,
     },
   ];
@@ -224,18 +230,18 @@ const buildResilienceBreakdown = (entries = []) =>
     const type = String(entry.type || '').toLowerCase();
     const positive = type === 'study';
     return {
-      id: `${entry.id || index}-${entry.time || index}`,
+      id: `${entry.analyticsRecordId || entry.id || index}-${entry.time || index}`,
       task:
         entry.activityText ||
         entry.activitytext ||
         entry.activity ||
         entry.title ||
         'Untitled activity',
-      time: entry.time || 'No time recorded',
+      time: entry.time ? `${entry.analyticsDate} | ${entry.time}` : `${entry.analyticsDate} | No time recorded`,
       score: positive ? '+3' : '-2',
       note: positive
-        ? 'Productive study time lifted your resilience for the day.'
-        : 'This non-study block likely reduced your recovery momentum.',
+        ? 'Productive study time contributed positively to the combined resilience view.'
+        : 'This non-study block reduced the combined resilience view.',
       positive,
     };
   });
@@ -244,18 +250,18 @@ const buildRabbitHoleBreakdown = (entries = []) =>
   entries
     .filter((entry) => String(entry.type || '').toLowerCase() !== 'study')
     .map((entry, index) => ({
-      id: `${entry.id || index}-${entry.time || index}`,
+      id: `${entry.analyticsRecordId || entry.id || index}-${entry.time || index}`,
       incident:
         entry.activityText ||
         entry.activitytext ||
         entry.activity ||
         entry.title ||
         'Non-study activity',
-      time: entry.time || 'No time recorded',
+      time: entry.time ? `${entry.analyticsDate} | ${entry.time}` : `${entry.analyticsDate} | No time recorded`,
       duration: `${parseRangeMinutes(entry.time || '') || 0} min`,
       impact: '-focus',
       entries: [String(entry.type || 'non-study')],
-      note: 'Detected from the saved raw payload for the selected day.',
+      note: 'Detected from the combined saved history for all calculated days.',
     }));
 
 const buildEscapeBreakdown = (entries = []) => {
@@ -304,23 +310,24 @@ const Dashboard = () => {
   }, []);
 
   const latestDay = history[history.length - 1] || null;
+  const allEntries = useMemo(() => flattenAllEntries(history), [history]);
   const metrics = useMemo(() => buildMetrics(history), [history]);
   const resilienceBreakdown = useMemo(
-    () => buildResilienceBreakdown(latestDay?.rawPayload || []),
-    [latestDay]
+    () => buildResilienceBreakdown(allEntries),
+    [allEntries]
   );
   const rabbitHoleBreakdown = useMemo(
-    () => buildRabbitHoleBreakdown(latestDay?.rawPayload || []),
-    [latestDay]
+    () => buildRabbitHoleBreakdown(allEntries),
+    [allEntries]
   );
   const escapeTimeBreakdown = useMemo(
-    () => buildEscapeBreakdown(latestDay?.rawPayload || []),
-    [latestDay]
+    () => buildEscapeBreakdown(allEntries),
+    [allEntries]
   );
   const totalEscapeTime = escapeTimeBreakdown.reduce((total, item) => total + item.minutes, 0);
-  const averageEscapeTime = latestDay?.averageEscapeTime ?? average(
-    escapeTimeBreakdown.map((item) => item.minutes)
-  );
+  const averageEscapeTime = history.length
+    ? average(history.map((item) => item.averageEscapeTime))
+    : 0;
   const appUsageDates = useMemo(() => [...getUsageDateSet(history)].sort(), [history]);
   const usageDateSet = useMemo(() => new Set(appUsageDates), [appUsageDates]);
   const calendarDays = useMemo(() => getMonthDays(selectedYear, selectedMonth), [selectedMonth, selectedYear]);
@@ -433,12 +440,12 @@ const Dashboard = () => {
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Resilience Overview</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Latest saved day activity impact</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Combined activity impact across all saved days</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Current Score</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Saved Days</p>
             <p className="mt-1 text-3xl font-semibold text-nexora-accent">
-              {latestDay ? latestDay.resilienceScore : '--'}
+              {history.length || '--'}
             </p>
           </div>
         </div>
@@ -478,12 +485,12 @@ const Dashboard = () => {
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Rabbit Hole Overview</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Latest non-study incidents</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Combined non-study incidents across saved history</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Detected Incidents</p>
             <p className="mt-1 text-3xl font-semibold text-nexora-accent">
-              {latestDay ? latestDay.rabbitHole : '--'}
+              {rabbitHoleBreakdown.length || '--'}
             </p>
           </div>
         </div>
@@ -533,7 +540,7 @@ const Dashboard = () => {
           <div>
             <p className="text-sm font-medium text-nexora-muted">Escape Time Analysis</p>
             <h2 className="mt-1 text-2xl font-semibold text-nexora-text">
-              Recovery windows from the latest saved raw entries
+              Recovery windows from all saved raw entries
             </h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">

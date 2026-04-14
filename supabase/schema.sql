@@ -49,3 +49,7 @@ create policy "add_calculation_runs_public_rw"
   for all
   using (true)
   with check (true);
+
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on public.daily_analytics to anon, authenticated, service_role;
+grant select, insert, update, delete on public.add_calculation_runs to anon, authenticated, service_role;
