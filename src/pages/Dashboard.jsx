@@ -3,6 +3,9 @@ import { CalendarDays, Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-reac
 import { getDailyAnalyticsHistory } from '../api/analyticsApi';
 
 const EMPTY_MESSAGE = 'No saved analytics yet. Use Add > Calculate to generate dashboard data.';
+const SPRINT_STORAGE_KEY = 'nexora-sprints';
+const ACTIVE_SPRINT_STORAGE_KEY = 'nexora-active-sprint';
+const SPRINTS_UPDATED_EVENT = 'nexora-sprints-updated';
 const monthNames = [
   'January',
   'February',
@@ -264,6 +267,37 @@ const buildRabbitHoleBreakdown = (entries = []) =>
       note: 'Detected from the combined saved history for all calculated days.',
     }));
 
+const buildSprintRabbitHoleBreakdown = (sprints = []) =>
+  sprints.flatMap((sprint, sprintIndex) =>
+    (Array.isArray(sprint.events) ? sprint.events : []).map((event, eventIndex) => ({
+      id: `${sprint.id || sprintIndex}-${event.id || eventIndex}`,
+      incident: sprint.title || `Sprint ${sprint.sprintNumber || sprintIndex + 1}`,
+      time: sprint.completedAt
+        ? new Date(sprint.completedAt).toLocaleString()
+        : event.timestamp || 'Sprint event',
+      duration: '2+ min',
+      impact: '-focus',
+      entries: ['sprint', 'page-visibility'],
+      note: event.reason || 'Rabbit hole detected during a sprint by the Page Visibility API.',
+    }))
+  );
+
+const readStoredSprintData = () => {
+  try {
+    const savedSprints = JSON.parse(localStorage.getItem(SPRINT_STORAGE_KEY) || '[]');
+    const activeSprint = JSON.parse(localStorage.getItem(ACTIVE_SPRINT_STORAGE_KEY) || 'null');
+    return {
+      savedSprints: Array.isArray(savedSprints) ? savedSprints : [],
+      activeSprint,
+    };
+  } catch {
+    return {
+      savedSprints: [],
+      activeSprint: null,
+    };
+  }
+};
+
 const buildEscapeBreakdown = (entries = []) => {
   const palette = ['#4f000b', '#7b1509', '#a72906', '#d33d03', '#ff5100'];
   const nonStudy = entries.filter(
@@ -301,6 +335,8 @@ const buildEscapeBreakdown = (entries = []) => {
 
 const Dashboard = () => {
   const [history, setHistory] = useState([]);
+  const [savedSprints, setSavedSprints] = useState([]);
+  const [activeSprint, setActiveSprint] = useState(null);
   const [showResilienceOverview, setShowResilienceOverview] = useState(false);
   const [showAllResilienceItems, setShowAllResilienceItems] = useState(false);
   const [showRabbitHoleOverview, setShowRabbitHoleOverview] = useState(false);
@@ -323,18 +359,45 @@ const Dashboard = () => {
       setHistory(normalizeHistory(savedHistory));
     };
 
-    loadHistory();
+    const syncDashboardData = () => {
+      loadHistory();
+      const sprintData = readStoredSprintData();
+      setSavedSprints(sprintData.savedSprints);
+      setActiveSprint(sprintData.activeSprint);
+    };
+
+    syncDashboardData();
+    window.addEventListener('storage', syncDashboardData);
+    window.addEventListener(SPRINTS_UPDATED_EVENT, syncDashboardData);
+    window.addEventListener('focus', syncDashboardData);
+
+    return () => {
+      window.removeEventListener('storage', syncDashboardData);
+      window.removeEventListener(SPRINTS_UPDATED_EVENT, syncDashboardData);
+      window.removeEventListener('focus', syncDashboardData);
+    };
   }, []);
 
   const latestDay = history[history.length - 1] || null;
   const allEntries = useMemo(() => flattenAllEntries(history), [history]);
-  const metrics = useMemo(() => buildMetrics(history), [history]);
-  const resilienceBreakdown = useMemo(
-    () => buildResilienceBreakdown(allEntries),
+  const sprintRabbitHoleBreakdown = useMemo(
+    () =>
+      buildSprintRabbitHoleBreakdown(
+        activeSprint ? [activeSprint, ...savedSprints] : savedSprints
+      ),
+    [activeSprint, savedSprints]
+  );
+  const analyticsRabbitHoleBreakdown = useMemo(
+    () => buildRabbitHoleBreakdown(allEntries),
     [allEntries]
   );
   const rabbitHoleBreakdown = useMemo(
-    () => buildRabbitHoleBreakdown(allEntries),
+    () => [...sprintRabbitHoleBreakdown, ...analyticsRabbitHoleBreakdown],
+    [sprintRabbitHoleBreakdown, analyticsRabbitHoleBreakdown]
+  );
+  const metrics = useMemo(() => buildMetrics(history), [history]);
+  const resilienceBreakdown = useMemo(
+    () => buildResilienceBreakdown(allEntries),
     [allEntries]
   );
   const escapeTimeBreakdown = useMemo(
@@ -520,7 +583,7 @@ const Dashboard = () => {
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Rabbit Hole Overview</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Combined non-study incidents across saved history</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Analytics incidents plus sprint rabbit holes</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Detected Incidents</p>

@@ -1,4 +1,6 @@
 const STORAGE_KEY = 'dailyAnalyticsHistory';
+const SPRINT_STORAGE_KEY = 'nexora-sprints';
+const ACTIVE_SPRINT_STORAGE_KEY = 'nexora-active-sprint';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -9,6 +11,54 @@ const hasSupabaseConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 const sortByDate = (items) =>
   [...items].sort((a, b) => new Date(a.entry_date || a.date) - new Date(b.entry_date || b.date));
+
+const readSprintRabbitHoleTotal = () => {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+
+  try {
+    const savedSprints = JSON.parse(window.localStorage.getItem(SPRINT_STORAGE_KEY) || '[]');
+    const activeSprint = JSON.parse(window.localStorage.getItem(ACTIVE_SPRINT_STORAGE_KEY) || 'null');
+    const allSprints = [...(Array.isArray(savedSprints) ? savedSprints : []), ...(activeSprint ? [activeSprint] : [])];
+
+    return allSprints.reduce((sum, sprint) => sum + Number(sprint?.rabbitHoles ?? 0), 0);
+  } catch {
+    return 0;
+  }
+};
+
+const mergeSprintRabbitHolesIntoHistory = (records) => {
+  const sprintRabbitHoleTotal = readSprintRabbitHoleTotal();
+  const normalizedRecords = Array.isArray(records) ? sortByDate(records) : [];
+
+  if (sprintRabbitHoleTotal === 0) {
+    return normalizedRecords;
+  }
+
+  if (normalizedRecords.length === 0) {
+    return [
+      {
+        date: new Date().toISOString().slice(0, 10),
+        resilienceScore: 0,
+        rabbitHole: sprintRabbitHoleTotal,
+        streaks: 0,
+        averageEscapeTime: 0,
+        source: 'sprints',
+        rawPayload: [],
+      },
+    ];
+  }
+
+  const merged = [...normalizedRecords];
+  const latestIndex = merged.length - 1;
+  merged[latestIndex] = {
+    ...merged[latestIndex],
+    rabbitHole: Number(merged[latestIndex].rabbitHole ?? merged[latestIndex].rabbit_hole ?? 0) + sprintRabbitHoleTotal,
+  };
+
+  return merged;
+};
 
 const readLocalAnalytics = () => {
   if (typeof window === 'undefined') {
@@ -40,7 +90,7 @@ export const getDailyAnalyticsHistory = async () => {
   const localRecords = readLocalAnalytics();
 
   if (!hasSupabaseConfig) {
-    return localRecords;
+    return mergeSprintRabbitHolesIntoHistory(localRecords);
   }
 
   try {
@@ -75,12 +125,12 @@ export const getDailyAnalyticsHistory = async () => {
 
     if (normalized.length > 0) {
       writeLocalAnalytics(normalized);
-      return normalized;
+      return mergeSprintRabbitHolesIntoHistory(normalized);
     }
 
-    return localRecords;
+    return mergeSprintRabbitHolesIntoHistory(localRecords);
   } catch {
-    return localRecords;
+    return mergeSprintRabbitHolesIntoHistory(localRecords);
   }
 };
 
