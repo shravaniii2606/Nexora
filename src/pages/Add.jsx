@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { saveDailyAnalyticsRecord } from '../api/analyticsApi';
 
 const Add = () => {
   const [entries, setEntries] = useState([]);
@@ -9,6 +10,7 @@ const Add = () => {
   const [escapeInfo, setEscapeInfo] = useState(null);
   const [showScoreSteps, setShowScoreSteps] = useState(false);
   const [view, setView] = useState('list'); // 'list' | 'score'
+  const [saveMessage, setSaveMessage] = useState('');
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
 
@@ -68,6 +70,9 @@ const Add = () => {
     };
   };
 
+  const getRabbitHoleCount = (data) =>
+    data.filter((entry) => String(entry.type || '').toLowerCase() !== 'study').length;
+
   const fetchEntriesForDate = async () => {
     setLoading(true);
     setError('');
@@ -99,6 +104,7 @@ const Add = () => {
     setScoreDetails(null);
     setEscapeInfo(null);
     setShowScoreSteps(false);
+    setSaveMessage('');
     await fetchEntriesForDate();
   };
 
@@ -121,6 +127,26 @@ const Add = () => {
     setScoreDetails(details);
     setEscapeInfo({ minutes: escapeMinutes, level, penalty, incidentStart, studyStart });
     setShowScoreSteps(false);
+
+    if (score !== null && escapeMinutes !== undefined) {
+      const rabbitHole = getRabbitHoleCount(data);
+      const result = await saveDailyAnalyticsRecord({
+        date: selectedDate,
+        resilienceScore: score,
+        rabbitHole,
+        averageEscapeTime: escapeMinutes,
+        source: 'mockapi',
+        rawPayload: data,
+      });
+
+      setSaveMessage(
+        result.source === 'supabase'
+          ? 'Saved to analytics history and synced to Supabase.'
+          : 'Saved to analytics history locally.'
+      );
+    } else {
+      setSaveMessage('Calculation finished, but there was not enough data to save analytics.');
+    }
   };
 
   return (
@@ -203,6 +229,12 @@ const Add = () => {
         {error && (
           <p style={{ color: 'var(--danger, #d9534f)', marginTop: '12px' }}>
             {error}
+          </p>
+        )}
+
+        {saveMessage && (
+          <p style={{ color: '#38bdf8', marginTop: '12px' }}>
+            {saveMessage}
           </p>
         )}
 

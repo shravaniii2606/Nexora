@@ -12,7 +12,7 @@ const ChatInput = ({ onSendMessage, isLoading }) => {
     }
   };
 
-  const handleKeyPress = (e) => {
+  const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -25,7 +25,7 @@ const ChatInput = ({ onSendMessage, isLoading }) => {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           placeholder="Ask me anything..."
           className="input-field"
           disabled={isLoading}
