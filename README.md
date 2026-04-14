@@ -24,12 +24,12 @@ npm install
 ### 2) Environment Variables
 Create `Nexora/.env.local`:
 ```env
-VITE_OPENROUTER_API_KEY=your_openrouter_api_key_here
+VITE_OPENROUTER_API_KEY=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
 VITE_OPENROUTER_MODEL=openai/gpt-4o-mini
 
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-VITE_ANALYTICS_USER_ID=default-user-id
+VITE_SUPABASE_URL=https://vuiimhpwxabixhniatlc.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1aWltaHB3eGFiaXhobmlhdGxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMTMyMTYsImV4cCI6MjA5MTY4OTIxNn0.gkMfg7D_Vj2tPnNtbFpukEecj0G1nkD9oZFwqSJpcMw
+
 ```
 
 ### 3) Run
