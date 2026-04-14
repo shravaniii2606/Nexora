@@ -10,7 +10,16 @@ import './AI.css';
 const AI = () => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const aiStatus = getAiConnectionStatus();
+
+  const getFallbackNotice = (response) => {
+    if (response.error === 'missing_api_key') {
+      return 'No OpenRouter API key is configured, so the assistant is using a local fallback response.';
+    }
+
+    return response.friendlyMessage || 'The live AI service was unavailable, so a fallback response was used.';
+  };
 
   // Initialize with welcome message
   useEffect(() => {
@@ -22,6 +31,7 @@ const AI = () => {
   }, []);
 
   const handleSendMessage = async (userMessage) => {
+    setAiError('');
     const conversationHistory = messages.map((message) => ({
       role: message.sender === 'ai' ? 'assistant' : 'user',
       content: message.text,
@@ -41,11 +51,16 @@ const AI = () => {
       // Add AI response
       if (response.success) {
         setMessages(prev => [...prev, { text: response.message, sender: 'ai' }]);
+        if (response.isMock) {
+          setAiError(getFallbackNotice(response));
+        }
       } else {
+        setAiError(response.friendlyMessage || 'The AI request failed. Please check your OpenRouter setup and try again.');
         setMessages(prev => [...prev, { text: 'Sorry, I encountered an error. Please try again.', sender: 'ai' }]);
       }
     } catch (error) {
       console.error('Error sending message:', error);
+      setAiError(error instanceof Error ? error.message : 'AI request failed');
       setMessages(prev => [...prev, { text: 'Sorry, I encountered an error. Please try again.', sender: 'ai' }]);
     } finally {
       setIsLoading(false);
@@ -60,8 +75,13 @@ const AI = () => {
         <p className="page-subtitle">
           {aiStatus.hasApiKey
             ? `Connected to ${aiStatus.model}.`
-            : ''}
+            : 'No API key configured. Add VITE_OPENROUTER_API_KEY in .env.local.'}
         </p>
+        {aiError && (
+          <p className="page-subtitle" style={{ color: '#f97316' }}>
+            {aiError}
+          </p>
+        )}
       </div>
       <div className="ai-container">
         <QuickMessages onSelectMessage={handleSendMessage} />
