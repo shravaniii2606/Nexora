@@ -91,7 +91,7 @@ export const saveDailyAnalyticsRecord = async (record) => {
   writeLocalAnalytics(nextRecords);
 
   if (!hasSupabaseConfig) {
-    return { success: true, source: 'local' };
+    return { success: false, source: 'local', reason: 'missing_config' };
   }
 
   try {
@@ -141,13 +141,24 @@ export const saveDailyAnalyticsRecord = async (record) => {
       );
 
       if (!retryResponse.ok) {
-        throw new Error(`Supabase save failed: ${retryResponse.status}`);
+        const body = await retryResponse.text();
+        return {
+          success: false,
+          source: 'local',
+          reason: `supabase_save_failed:${retryResponse.status}`,
+          details: body,
+        };
       }
     }
 
     return { success: true, source: 'supabase' };
-  } catch {
-    return { success: true, source: 'local' };
+  } catch (error) {
+    return {
+      success: false,
+      source: 'local',
+      reason: 'network_or_runtime_error',
+      details: error instanceof Error ? error.message : String(error),
+    };
   }
 };
 
