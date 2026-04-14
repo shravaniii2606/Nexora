@@ -1,30 +1,53 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { getDailyAnalyticsHistory } from '../api/analyticsApi';
+import { getDailyAnalyticsHistory, getSprintSessions } from '../api/analyticsApi';
 
 const SAMPLE_HISTORY = [
-  { date: '2026-03-10', resilienceScore: 62 },
-  { date: '2026-03-14', resilienceScore: 65 },
-  { date: '2026-03-18', resilienceScore: 61 },
-  { date: '2026-03-22', resilienceScore: 69 },
-  { date: '2026-03-26', resilienceScore: 73 },
-  { date: '2026-03-30', resilienceScore: 76 },
-  { date: '2026-04-03', resilienceScore: 74 },
-  { date: '2026-04-07', resilienceScore: 79 },
-  { date: '2026-04-11', resilienceScore: 82 },
-  { date: '2026-04-15', resilienceScore: 84 },
+  {
+    date: '2026-03-10',
+    resilienceScore: 62,
+    recoverySpeed: 68,
+    distractionDepth: 57,
+    productiveRecovery: 61,
+  },
+  {
+    date: '2026-03-14',
+    resilienceScore: 65,
+    recoverySpeed: 71,
+    distractionDepth: 60,
+    productiveRecovery: 64,
+  },
+  {
+    date: '2026-03-18',
+    resilienceScore: 61,
+    recoverySpeed: 66,
+    distractionDepth: 58,
+    productiveRecovery: 59,
+  },
+  {
+    date: '2026-03-22',
+    resilienceScore: 69,
+    recoverySpeed: 74,
+    distractionDepth: 63,
+    productiveRecovery: 67,
+  },
+  {
+    date: '2026-03-26',
+    resilienceScore: 73,
+    recoverySpeed: 77,
+    distractionDepth: 69,
+    productiveRecovery: 71,
+  },
+  {
+    date: '2026-04-15',
+    resilienceScore: 84,
+    recoverySpeed: 88,
+    distractionDepth: 79,
+    productiveRecovery: 83,
+  },
 ];
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const normalizeEntry = (entry, index) => {
-  const fallback = SAMPLE_HISTORY[index % SAMPLE_HISTORY.length];
-
-  return {
-    date: entry.date || entry.entry_date || fallback.date,
-    resilienceScore: Number(entry.resilienceScore ?? entry.resilience_score ?? fallback.resilienceScore),
-  };
-};
 
 const parseDateKey = (dateKey) => {
   const [year, month, day] = String(dateKey).split('-').map(Number);
@@ -37,12 +60,6 @@ const toDateKey = (date) => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-
-const formatLabel = (dateString) =>
-  parseDateKey(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
 
 const formatFullDate = (dateString) =>
   parseDateKey(dateString).toLocaleDateString('en-US', {
@@ -57,17 +74,19 @@ const getAverage = (values) =>
     ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
     : 0;
 
+const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+
 const getInsight = (currentScore) => {
   if (currentScore >= 80) {
-    return 'Excellent resilience. Your recent focus patterns are holding up strongly.';
+    return 'Excellent resilience. Your return-to-focus pattern is strong on this day.';
   }
 
   if (currentScore >= 65) {
-    return 'Healthy resilience. You are staying fairly consistent with productive sessions.';
+    return 'Healthy resilience. Recoveries were solid even when attention drifted.';
   }
 
   if (currentScore > 0) {
-    return 'Resilience is still building. More steady study blocks should lift this score.';
+    return 'Resilience is still building. Faster returns and longer focused recovery will lift this.';
   }
 
   return 'No resilience score was saved for this date yet.';
@@ -88,20 +107,140 @@ const getCalendarDays = (monthDate) => {
   return days;
 };
 
-const getSampleMetricBundle = (dateKey) => {
-  const seed = String(dateKey)
-    .split('')
-    .reduce((sum, char) => sum + char.charCodeAt(0), 0);
+const calculateSprintEventMetrics = (event, sprintDurationMs) => {
+  const timeSpentDistracted = Number(event?.timeSpentDistracted ?? 0);
+  const safeSprintDurationMs = Math.max(sprintDurationMs, 1);
+  const remainingSprintTime = Math.max(Number(event?.remainingSprintTime ?? 0), 1);
+  const focusTimeAfter = Math.max(Number(event?.focusTimeAfter ?? 0), 0);
+  const timeToReturn = timeSpentDistracted / safeSprintDurationMs;
 
   return {
-    recoverySpeed: 12 + (seed % 14),
-    distractionDepth: 18 + ((seed * 3) % 35),
-    productiveRecovery: 48 + ((seed * 5) % 39),
+    recoverySpeed: clamp(1 - timeToReturn),
+    distractionDepth: clamp(timeSpentDistracted / safeSprintDurationMs),
+    productiveRecovery: clamp(focusTimeAfter / remainingSprintTime),
   };
 };
 
+const calculateSprintWiseMetrics = (sprints = []) => {
+  const sprintValues = sprints
+    .map((sprint) => {
+      const sprintDurationMs = Number(sprint?.durationMinutes ?? 0) * 60 * 1000;
+      const eventMetrics = (Array.isArray(sprint?.rabbitHoleLog) ? sprint.rabbitHoleLog : [])
+        .map((event) => calculateSprintEventMetrics(event, sprintDurationMs));
+
+      if (eventMetrics.length === 0) {
+        return null;
+      }
+
+      return {
+        recoverySpeed: getAverage(eventMetrics.map((item) => item.recoverySpeed * 100)),
+        distractionDepth: getAverage(eventMetrics.map((item) => item.distractionDepth * 100)),
+        productiveRecovery: getAverage(eventMetrics.map((item) => item.productiveRecovery * 100)),
+      };
+    })
+    .filter(Boolean);
+
+  if (sprintValues.length === 0) {
+    return null;
+  }
+
+  return {
+    recoverySpeed: getAverage(sprintValues.map((item) => item.recoverySpeed)),
+    distractionDepth: getAverage(sprintValues.map((item) => item.distractionDepth)),
+    productiveRecovery: getAverage(sprintValues.map((item) => item.productiveRecovery)),
+    sprintCount: sprintValues.length,
+  };
+};
+
+const calculateSprintSummaryMetrics = (sprint) => {
+  const sprintDurationMs = Number(sprint?.durationMinutes ?? 0) * 60 * 1000;
+  const eventMetrics = (Array.isArray(sprint?.rabbitHoleLog) ? sprint.rabbitHoleLog : [])
+    .map((event) => calculateSprintEventMetrics(event, sprintDurationMs));
+
+  if (eventMetrics.length === 0) {
+    return {
+      recoverySpeed: 100,
+      distractionDepth: 0,
+      productiveRecovery: 100,
+      resilienceScore: 100,
+    };
+  }
+
+  const recoverySpeed = getAverage(eventMetrics.map((item) => item.recoverySpeed * 100));
+  const distractionDepth = getAverage(eventMetrics.map((item) => item.distractionDepth * 100));
+  const productiveRecovery = getAverage(eventMetrics.map((item) => item.productiveRecovery * 100));
+  const resilienceScore = Math.round(
+    recoverySpeed * 0.4 + (100 - distractionDepth) * 0.3 + productiveRecovery * 0.3
+  );
+
+  return {
+    recoverySpeed,
+    distractionDepth,
+    productiveRecovery,
+    resilienceScore,
+  };
+};
+
+const buildResilienceDataset = (analyticsHistory = [], sprintHistory = []) => {
+  const sprintMap = new Map();
+
+  sprintHistory.forEach((sprint) => {
+    const dateKey = sprint?.date || (sprint?.completedAt ? new Date(sprint.completedAt).toISOString().slice(0, 10) : '');
+    if (!dateKey) return;
+    const metrics = calculateSprintSummaryMetrics(sprint);
+
+    const current = sprintMap.get(dateKey) || {
+      date: dateKey,
+      resilienceScore: 0,
+      recoverySpeed: 0,
+      distractionDepth: 0,
+      productiveRecovery: 0,
+      count: 0,
+    };
+
+    current.resilienceScore += Number(metrics.resilienceScore ?? 0);
+    current.recoverySpeed += Number(metrics.recoverySpeed ?? 0);
+    current.distractionDepth += Number(metrics.distractionDepth ?? 0);
+    current.productiveRecovery += Number(metrics.productiveRecovery ?? 0);
+    current.count += 1;
+    sprintMap.set(dateKey, current);
+  });
+
+  const sprintEntries = Array.from(sprintMap.values()).map((item) => ({
+    date: item.date,
+    resilienceScore: Math.round(item.resilienceScore / item.count),
+    recoverySpeed: Math.round(item.recoverySpeed / item.count),
+    distractionDepth: Math.round(item.distractionDepth / item.count),
+    productiveRecovery: Math.round(item.productiveRecovery / item.count),
+    source: 'sprint',
+  }));
+
+  if (sprintEntries.length > 0) {
+    return sprintEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  const analyticsEntries = analyticsHistory
+    .map((entry, index) => {
+      const fallback = SAMPLE_HISTORY[index % SAMPLE_HISTORY.length];
+      const resilienceScore = Number(entry.resilienceScore ?? entry.resilience_score ?? fallback.resilienceScore);
+
+      return {
+        date: entry.date || entry.entry_date || fallback.date,
+        resilienceScore,
+        recoverySpeed: fallback.recoverySpeed,
+        distractionDepth: fallback.distractionDepth,
+        productiveRecovery: fallback.productiveRecovery,
+        source: 'analytics',
+      };
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  return analyticsEntries.length > 0 ? analyticsEntries : SAMPLE_HISTORY.map((item) => ({ ...item, source: 'sample' }));
+};
+
 const ResilienceScore = () => {
-  const [storedHistory, setStoredHistory] = useState([]);
+  const [analyticsHistory, setAnalyticsHistory] = useState([]);
+  const [savedSprints, setSavedSprints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState('');
   const [visibleMonth, setVisibleMonth] = useState(() => new Date());
@@ -109,37 +248,47 @@ const ResilienceScore = () => {
   useEffect(() => {
     let isMounted = true;
 
-    const loadHistory = async () => {
+    const loadResilienceData = async () => {
       setLoading(true);
-      const history = await getDailyAnalyticsHistory();
+      const [history, sprintHistory] = await Promise.all([
+        getDailyAnalyticsHistory(),
+        getSprintSessions(),
+      ]);
 
       if (isMounted) {
-        setStoredHistory(history);
+        setAnalyticsHistory(history);
+        setSavedSprints(sprintHistory);
         setLoading(false);
       }
     };
 
-    loadHistory();
+    loadResilienceData();
+    window.addEventListener('storage', loadResilienceData);
+    window.addEventListener('nexora-sprints-updated', loadResilienceData);
 
     return () => {
       isMounted = false;
+      window.removeEventListener('storage', loadResilienceData);
+      window.removeEventListener('nexora-sprints-updated', loadResilienceData);
     };
   }, []);
 
-  const rawHistory = storedHistory.length > 0 ? storedHistory : SAMPLE_HISTORY;
-  const normalizedHistory = useMemo(
-    () => rawHistory.map(normalizeEntry).sort((a, b) => new Date(a.date) - new Date(b.date)),
-    [rawHistory]
+  const resilienceHistory = useMemo(
+    () => buildResilienceDataset(analyticsHistory, savedSprints),
+    [analyticsHistory, savedSprints]
   );
-  const scoreByDate = useMemo(
-    () => new Map(normalizedHistory.map((item) => [item.date, item.resilienceScore])),
-    [normalizedHistory]
+
+  const byDate = useMemo(
+    () => new Map(resilienceHistory.map((item) => [item.date, item])),
+    [resilienceHistory]
   );
-  const scores = normalizedHistory.map((item) => item.resilienceScore);
-  const latest = normalizedHistory[normalizedHistory.length - 1];
+
+  const latest = resilienceHistory[resilienceHistory.length - 1];
+  const scores = resilienceHistory.map((item) => item.resilienceScore);
   const average = getAverage(scores);
   const highest = scores.length ? Math.max(...scores) : 0;
-  const usingSampleData = storedHistory.length === 0;
+  const usingSampleData = resilienceHistory.every((item) => item.source === 'sample');
+  const usingSprintData = resilienceHistory.some((item) => item.source === 'sprint');
 
   useEffect(() => {
     if (!selectedDate && latest?.date) {
@@ -148,9 +297,22 @@ const ResilienceScore = () => {
     }
   }, [latest, selectedDate]);
 
-  const selectedScore = scoreByDate.get(selectedDate) ?? null;
-  const selectedMetrics = getSampleMetricBundle(selectedDate || latest?.date || '2026-04-15');
+  const selectedEntry = byDate.get(selectedDate) || null;
   const calendarDays = getCalendarDays(visibleMonth);
+  const selectedDateSprints = useMemo(
+    () =>
+      savedSprints.filter((sprint) => {
+        if (!selectedDate) return false;
+        const sprintDate =
+          sprint?.date || (sprint?.completedAt ? new Date(sprint.completedAt).toISOString().slice(0, 10) : '');
+        return sprintDate === selectedDate;
+      }),
+    [savedSprints, selectedDate]
+  );
+  const sprintWiseMetrics = useMemo(
+    () => calculateSprintWiseMetrics(selectedDateSprints),
+    [selectedDateSprints]
+  );
 
   return (
     <div className="analytics-page resilience-page">
@@ -158,16 +320,16 @@ const ResilienceScore = () => {
         <div className="breadcrumb">Pages / Resilience Score</div>
         <h1 className="page-title">Resilience Score</h1>
         <p className="page-subtitle">
-          Pick a date on the calendar to inspect that day&apos;s resilience score and supporting
-          recovery metrics.
+          Built from sprint rabbit-hole recovery data using distraction time, return time, and
+          focused recovery after each return.
         </p>
       </div>
 
       <section className="resilience-hero-grid">
         <div className="panel resilience-hero-card">
           <span className="resilience-hero-label">Selected Day</span>
-          <strong className="resilience-hero-value">{selectedScore ?? '--'}</strong>
-          <p className="resilience-hero-copy">{getInsight(selectedScore ?? 0)}</p>
+          <strong className="resilience-hero-value">{selectedEntry?.resilienceScore ?? '--'}</strong>
+          <p className="resilience-hero-copy">{getInsight(selectedEntry?.resilienceScore ?? 0)}</p>
           <span className={`analytics-badge ${usingSampleData ? 'is-sample' : ''}`}>
             {selectedDate ? formatFullDate(selectedDate) : 'Select a date'}
           </span>
@@ -187,10 +349,12 @@ const ResilienceScore = () => {
           </div>
 
           <div className="panel analytics-stat-card">
-            <span className="analytics-stat-label">Saved Days</span>
-            <strong className="analytics-stat-value">{normalizedHistory.length}</strong>
+            <span className="analytics-stat-label">Data Source</span>
+            <strong className="analytics-stat-value">
+              {usingSprintData ? 'Sprint' : usingSampleData ? 'Sample' : 'Analytics'}
+            </strong>
             <span className="analytics-stat-note">
-              {usingSampleData ? 'Showing sample data for now' : 'Dates available in your history'}
+              {loading ? 'Loading saved history' : `${resilienceHistory.length} dates available`}
             </span>
           </div>
         </div>
@@ -202,7 +366,7 @@ const ResilienceScore = () => {
             <div>
               <h2 className="analytics-panel-title">Calendar</h2>
               <p className="analytics-panel-copy">
-                Click any date to reflect that day&apos;s resilience score above.
+                Click any date to reflect that day&apos;s resilience score and recovery metrics.
               </p>
             </div>
 
@@ -253,9 +417,9 @@ const ResilienceScore = () => {
               }
 
               const dateKey = toDateKey(day);
-              const score = scoreByDate.get(dateKey);
+              const entry = byDate.get(dateKey);
               const isSelected = selectedDate === dateKey;
-              const hasData = score !== undefined;
+              const hasData = Boolean(entry);
 
               return (
                 <button
@@ -267,7 +431,7 @@ const ResilienceScore = () => {
                   onClick={() => setSelectedDate(dateKey)}
                 >
                   <span className="resilience-day-number">{day.getDate()}</span>
-                  <span className="resilience-day-score">{hasData ? score : '--'}</span>
+                  <span className="resilience-day-score">{hasData ? entry.resilienceScore : '--'}</span>
                 </button>
               );
             })}
@@ -277,20 +441,32 @@ const ResilienceScore = () => {
         <div className="resilience-metrics-stack">
           <div className="panel resilience-metric-card">
             <span className="analytics-stat-label">Recovery Speed</span>
-            <strong className="analytics-stat-value">{selectedMetrics.recoverySpeed} min</strong>
-            <span className="analytics-stat-note">Sample recovery time after a distraction on this date</span>
+            <strong className="analytics-stat-value">
+              {sprintWiseMetrics?.recoverySpeed ?? selectedEntry?.recoverySpeed ?? '--'}%
+            </strong>
+            <span className="analytics-stat-note">
+              Formula: 1 - time to return
+            </span>
           </div>
 
           <div className="panel resilience-metric-card">
             <span className="analytics-stat-label">Distraction Depth</span>
-            <strong className="analytics-stat-value">{selectedMetrics.distractionDepth}%</strong>
-            <span className="analytics-stat-note">Sample estimate of how deep distractions became</span>
+            <strong className="analytics-stat-value">
+              {sprintWiseMetrics?.distractionDepth ?? selectedEntry?.distractionDepth ?? '--'}%
+            </strong>
+            <span className="analytics-stat-note">
+              Formula: time spent distracted / sprint duration
+            </span>
           </div>
 
           <div className="panel resilience-metric-card">
             <span className="analytics-stat-label">Productive Recovery</span>
-            <strong className="analytics-stat-value">{selectedMetrics.productiveRecovery}%</strong>
-            <span className="analytics-stat-note">Sample share of recovered time turned productive again</span>
+            <strong className="analytics-stat-value">
+              {sprintWiseMetrics?.productiveRecovery ?? selectedEntry?.productiveRecovery ?? '--'}%
+            </strong>
+            <span className="analytics-stat-note">
+              Formula: focus time after return / remaining sprint time
+            </span>
           </div>
         </div>
       </section>
