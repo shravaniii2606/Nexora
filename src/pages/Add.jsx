@@ -376,7 +376,7 @@ const Add = () => {
                 <div style={{ marginTop: '8px', color: 'var(--text-secondary)' }}>
                   {rabbitHoleDetails.map((incident, index) => (
                     <div key={`${incident.startMinutes}-${index}`} style={{ marginBottom: '6px' }}>
-                      {index + 1}. {incident.startTime} -> {incident.endTime} (
+                      {index + 1}. {incident.startTime}{' -> '}{incident.endTime} (
                       {incident.entries.length} entries)
                     </div>
                   ))}

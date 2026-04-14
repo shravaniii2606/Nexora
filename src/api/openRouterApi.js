@@ -44,13 +44,71 @@ const getMockResponse = async () => {
   await new Promise((resolve) => setTimeout(resolve, 700));
   return {
     success: true,
+    isMock: true,
+    error: null,
     message: mockResponses[Math.floor(Math.random() * mockResponses.length)],
   };
 };
 
+const parseOpenRouterErrorBody = (errorBody) => {
+  if (!errorBody) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(errorBody);
+    return (
+      parsed?.error?.message ||
+      parsed?.message ||
+      parsed?.error ||
+      ''
+    );
+  } catch {
+    return errorBody;
+  }
+};
+
+const getFriendlyOpenRouterError = (status, details = '') => {
+  const normalizedDetails = details.toLowerCase();
+
+  switch (status) {
+    case 400:
+      return 'The AI request was rejected because it was malformed.';
+    case 401:
+      return 'The OpenRouter API key is invalid or expired.';
+    case 402:
+      if (
+        normalizedDetails.includes('credit') ||
+        normalizedDetails.includes('payment') ||
+        normalizedDetails.includes('quota') ||
+        normalizedDetails.includes('balance')
+      ) {
+        return 'The AI request could not be completed because the OpenRouter account has no available credits or quota.';
+      }
+      return 'The AI request could not be completed because the OpenRouter account needs billing or credits.';
+    case 403:
+      return 'The OpenRouter request was blocked. Check the model and account permissions.';
+    case 404:
+      return 'The selected AI model was not found on OpenRouter.';
+    case 429:
+      return 'Too many AI requests were sent too quickly. Please wait a moment and try again.';
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return 'OpenRouter is temporarily unavailable. Please try again shortly.';
+    default:
+      return `The AI request failed with OpenRouter HTTP ${status}.`;
+  }
+};
+
 export const sendMessage = async (userMessage, conversationHistory = [], dashboardSummary = '') => {
   if (!OPENROUTER_API_KEY) {
-    return getMockResponse();
+    const mock = await getMockResponse();
+    return {
+      ...mock,
+      error: 'missing_api_key',
+    };
   }
 
   try {
@@ -81,7 +139,16 @@ export const sendMessage = async (userMessage, conversationHistory = [], dashboa
     });
 
     if (!response.ok) {
-      throw new Error(`OpenRouter request failed: ${response.status}`);
+      const errorBody = await response.text();
+      const details = parseOpenRouterErrorBody(errorBody);
+      return {
+        success: false,
+        message: '',
+        isMock: false,
+        error: `openrouter_http_${response.status}`,
+        details,
+        friendlyMessage: getFriendlyOpenRouterError(response.status, details),
+      };
     }
 
     const data = await response.json();
@@ -93,11 +160,18 @@ export const sendMessage = async (userMessage, conversationHistory = [], dashboa
 
     return {
       success: true,
+      isMock: false,
+      error: null,
       message: sanitizeAiMessage(message),
     };
   } catch (error) {
     console.error('Error calling OpenRouter:', error);
-    return getMockResponse();
+    const mock = await getMockResponse();
+    return {
+      ...mock,
+      error: error instanceof Error ? error.message : 'unknown_error',
+      friendlyMessage: 'The live AI service was unavailable, so a fallback response was used.',
+    };
   }
 };
 
