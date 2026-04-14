@@ -8,6 +8,9 @@ const Add = () => {
   const [resilienceScore, setResilienceScore] = useState(null);
   const [scoreDetails, setScoreDetails] = useState(null);
   const [escapeInfo, setEscapeInfo] = useState(null);
+  const [rabbitHoleIncidents, setRabbitHoleIncidents] = useState(null);
+  const [rabbitHoleDetails, setRabbitHoleDetails] = useState([]);
+  const [showRabbitHoles, setShowRabbitHoles] = useState(false);
   const [showScoreSteps, setShowScoreSteps] = useState(false);
   const [view, setView] = useState('list'); // 'list' | 'score'
   const [saveMessage, setSaveMessage] = useState('');
@@ -16,6 +19,18 @@ const Add = () => {
 
   const parseStartMinutes = (timeRange = '') => {
     const raw = timeRange.split('-')[0]?.trim() || '';
+    const match = raw.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+    if (!match) return null;
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const meridian = match[3]?.toLowerCase();
+    if (meridian === 'pm' && hours !== 12) hours += 12;
+    if (meridian === 'am' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  };
+
+  const parseEndMinutes = (timeRange = '') => {
+    const raw = timeRange.split('-')[1]?.trim() || '';
     const match = raw.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
     if (!match) return null;
     let hours = parseInt(match[1], 10);
@@ -70,8 +85,47 @@ const Add = () => {
     };
   };
 
-  const getRabbitHoleCount = (data) =>
-    data.filter((entry) => String(entry.type || '').toLowerCase() !== 'study').length;
+  const getRabbitHoleIncidents = (data) => {
+    const normalized = data
+      .map((entry) => {
+        const type = String(entry.type || '').toLowerCase();
+        const startMinutes = parseStartMinutes(entry.time || '');
+        const endMinutes = parseEndMinutes(entry.time || '');
+        return { ...entry, type, startMinutes, endMinutes };
+      })
+      .filter((entry) => entry.startMinutes !== null)
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+
+    const incidents = [];
+    let current = null;
+
+    normalized.forEach((entry) => {
+      if (entry.type !== 'study') {
+        if (!current) {
+          current = {
+            startTime: entry.time || 'Unknown',
+            endTime: entry.time || 'Unknown',
+            startMinutes: entry.startMinutes,
+            endMinutes: entry.endMinutes ?? entry.startMinutes,
+            entries: [entry],
+          };
+        } else {
+          current.endTime = entry.time || current.endTime;
+          current.endMinutes = entry.endMinutes ?? entry.startMinutes;
+          current.entries.push(entry);
+        }
+      } else if (current) {
+        incidents.push(current);
+        current = null;
+      }
+    });
+
+    if (current) {
+      incidents.push(current);
+    }
+
+    return incidents;
+  };
 
   const fetchEntriesForDate = async () => {
     setLoading(true);
@@ -103,6 +157,9 @@ const Add = () => {
     setResilienceScore(null);
     setScoreDetails(null);
     setEscapeInfo(null);
+    setRabbitHoleIncidents(null);
+    setRabbitHoleDetails([]);
+    setShowRabbitHoles(false);
     setShowScoreSteps(false);
     setSaveMessage('');
     await fetchEntriesForDate();
@@ -113,6 +170,9 @@ const Add = () => {
     setResilienceScore(null);
     setScoreDetails(null);
     setEscapeInfo(null);
+    setRabbitHoleIncidents(null);
+    setRabbitHoleDetails([]);
+    setShowRabbitHoles(false);
     const data = await fetchEntriesForDate();
     const {
       score,
@@ -133,7 +193,7 @@ const Add = () => {
       const baseRecord = {
         date: selectedDate,
         resilienceScore: score,
-        rabbitHole,
+        rabbitHole: incidents.length,
         averageEscapeTime: escapeMinutes,
         source: 'mockapi',
         rawPayload: data,
@@ -294,7 +354,52 @@ const Add = () => {
                   {escapeInfo ? escapeInfo.level : 'No data'}
                 </div>
               </div>
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.03)',
+                  cursor: rabbitHoleIncidents ? 'pointer' : 'default'
+                }}
+                onClick={() =>
+                  rabbitHoleIncidents ? setShowRabbitHoles((prev) => !prev) : null
+                }
+              >
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Rabbit Hole Incidents
+                </div>
+                <div style={{ fontSize: '26px', fontWeight: 700, marginTop: '4px' }}>
+                  {rabbitHoleIncidents !== null ? rabbitHoleIncidents : '-'}
+                </div>
+                <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  {rabbitHoleIncidents ? 'Tap to view incidents' : 'Consecutive non-study blocks'}
+                </div>
+              </div>
             </div>
+            {showRabbitHoles && rabbitHoleDetails.length > 0 && (
+              <div
+                style={{
+                  marginTop: '14px',
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.02)'
+                }}
+              >
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Rabbit hole incidents
+                </div>
+                <div style={{ marginTop: '8px', color: 'var(--text-secondary)' }}>
+                  {rabbitHoleDetails.map((incident, index) => (
+                    <div key={`${incident.startMinutes}-${index}`} style={{ marginBottom: '6px' }}>
+                      {index + 1}. {incident.startTime} → {incident.endTime} (
+                      {incident.entries.length} entries)
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {showScoreSteps && (
               <div
                 style={{
@@ -322,6 +427,9 @@ const Add = () => {
                 </div>
                 <div style={{ color: 'var(--text-secondary)' }}>
                   5. Score = 100 - penalty = {resilienceScore !== null ? resilienceScore : '-'}
+                </div>
+                <div style={{ color: 'var(--text-secondary)' }}>
+                  6. Rabbit hole incidents = {rabbitHoleIncidents ?? '-'}
                 </div>
               </div>
             )}
