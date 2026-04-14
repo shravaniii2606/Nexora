@@ -60,7 +60,7 @@ const AI = () => {
         <p className="page-subtitle">
           {aiStatus.hasApiKey
             ? `Connected to ${aiStatus.model}.`
-            : 'No OpenRouter key detected. Restart the Vite server after adding .env.local.'}
+            : ''}
         </p>
       </div>
       <div className="ai-container">

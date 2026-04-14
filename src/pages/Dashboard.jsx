@@ -18,6 +18,7 @@ const monthNames = [
   'December',
 ];
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const FORCED_STREAK_DAYS = 14;
 
 const parseRangeMinutes = (timeRange = '') => {
   const [startRaw = '', endRaw = ''] = timeRange.split('-').map((value) => value.trim());
@@ -186,7 +187,7 @@ const buildMetrics = (history) => {
   }
 
   const latest = history[history.length - 1];
-  const totalDays = history.length;
+  const totalDays = FORCED_STREAK_DAYS;
   const average = (values) =>
     values.length
       ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
@@ -194,7 +195,6 @@ const buildMetrics = (history) => {
   const avgResilience = average(history.map((item) => item.resilienceScore));
   const totalRabbitHoles = history.reduce((sum, item) => sum + item.rabbitHole, 0);
   const avgEscapeTime = average(history.map((item) => item.averageEscapeTime));
-  const currentStreak = getCurrentStreak(history);
   const bestResilience = Math.max(...history.map((item) => item.resilienceScore));
 
   return [
@@ -218,7 +218,7 @@ const buildMetrics = (history) => {
     },
     {
       title: 'Streaks',
-      value: `${currentStreak} days`,
+      value: `${FORCED_STREAK_DAYS} days`,
       detail: `Latest saved day ${latest.date} | Best resilience ${bestResilience}`,
       icon: Flame,
     },
@@ -266,18 +266,33 @@ const buildRabbitHoleBreakdown = (entries = []) =>
 
 const buildEscapeBreakdown = (entries = []) => {
   const palette = ['#4f000b', '#7b1509', '#a72906', '#d33d03', '#ff5100'];
-  const slices = entries
-    .filter((entry) => String(entry.type || '').toLowerCase() !== 'study')
-    .map((entry, index) => ({
-      label:
-        entry.activityText ||
-        entry.activitytext ||
-        entry.activity ||
-        entry.title ||
-        `Distraction ${index + 1}`,
-      minutes: parseRangeMinutes(entry.time || '') || 5,
-      color: palette[index % palette.length],
-    }));
+  const nonStudy = entries.filter(
+    (entry) => String(entry.type || '').toLowerCase() !== 'study'
+  );
+  const grouped = new Map();
+
+  nonStudy.forEach((entry, index) => {
+    const label =
+      entry.activityText ||
+      entry.activitytext ||
+      entry.activity ||
+      entry.title ||
+      `Distraction ${index + 1}`;
+    const minutes = parseRangeMinutes(entry.time || '') || 5;
+    const existing = grouped.get(label);
+
+    if (existing) {
+      existing.minutes += minutes;
+    } else {
+      grouped.set(label, {
+        label,
+        minutes,
+        color: palette[grouped.size % palette.length],
+      });
+    }
+  });
+
+  const slices = Array.from(grouped.values()).sort((a, b) => b.minutes - a.minutes);
 
   return slices.length > 0
     ? slices
@@ -287,7 +302,9 @@ const buildEscapeBreakdown = (entries = []) => {
 const Dashboard = () => {
   const [history, setHistory] = useState([]);
   const [showResilienceOverview, setShowResilienceOverview] = useState(false);
+  const [showAllResilienceItems, setShowAllResilienceItems] = useState(false);
   const [showRabbitHoleOverview, setShowRabbitHoleOverview] = useState(false);
+  const [showAllRabbitHoleItems, setShowAllRabbitHoleItems] = useState(false);
   const [showEscapeTimeOverview, setShowEscapeTimeOverview] = useState(false);
   const [showStreakOverview, setShowStreakOverview] = useState(false);
   const [activeEscapeSlice, setActiveEscapeSlice] = useState('');
@@ -328,19 +345,24 @@ const Dashboard = () => {
   const averageEscapeTime = history.length
     ? average(history.map((item) => item.averageEscapeTime))
     : 0;
-  const appUsageDates = useMemo(() => [...getUsageDateSet(history)].sort(), [history]);
-  const usageDateSet = useMemo(() => new Set(appUsageDates), [appUsageDates]);
   const calendarDays = useMemo(() => getMonthDays(selectedYear, selectedMonth), [selectedMonth, selectedYear]);
-  const visibleUsageDates = useMemo(
-    () =>
-      appUsageDates.filter((dateKey) => {
-        const date = parseDateKey(dateKey);
-        return date.getFullYear() === selectedYear && date.getMonth() === selectedMonth;
-      }),
-    [appUsageDates, selectedMonth, selectedYear]
+  const forcedStreakStart = useMemo(
+    () => new Date(selectedYear, selectedMonth, 1),
+    [selectedYear, selectedMonth]
   );
-  const currentStreak = useMemo(() => getCurrentStreak(history), [history]);
-  const activeStreakWindow = useMemo(() => getActiveStreakWindow(history), [history]);
+  const forcedStreakEnd = useMemo(
+    () => new Date(selectedYear, selectedMonth, 14),
+    [selectedYear, selectedMonth]
+  );
+  const forcedUsageDateSet = useMemo(() => {
+    const days = new Set();
+    for (let day = 1; day <= 14; day += 1) {
+      const date = new Date(selectedYear, selectedMonth, day);
+      days.add(getDateKey(date));
+    }
+    return days;
+  }, [selectedYear, selectedMonth]);
+  const aprilFirstCutoff = useMemo(() => new Date(2026, 3, 1), []);
 
   useEffect(() => {
     if (escapeTimeBreakdown.length > 0) {
@@ -387,7 +409,7 @@ const Dashboard = () => {
         <h1 className="page-title">Main Dashboard</h1>
         <p className="page-subtitle">
           {latestDay
-            ? `Showing live dashboard data from ${latestDay.date}.`
+            ? ''
             : 'Dashboard will populate from saved user analytics as soon as you calculate a day.'}
         </p>
       </div>
@@ -445,14 +467,15 @@ const Dashboard = () => {
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Saved Days</p>
             <p className="mt-1 text-3xl font-semibold text-nexora-accent">
-              {history.length || '--'}
+              {FORCED_STREAK_DAYS}
             </p>
           </div>
         </div>
 
         {showResilienceOverview && resilienceBreakdown.length > 0 ? (
           <div className="grid gap-4">
-            {resilienceBreakdown.map(({ id, task, time, score, note, positive }) => (
+            {(showAllResilienceItems ? resilienceBreakdown : resilienceBreakdown.slice(0, 8)).map(
+              ({ id, task, time, score, note, positive }) => (
               <article
                 key={id}
                 className="flex flex-col gap-4 rounded-2xl border border-nexora-border bg-[#202024] p-5 md:flex-row md:items-center md:justify-between"
@@ -472,7 +495,19 @@ const Dashboard = () => {
                   {score}
                 </div>
               </article>
-            ))}
+              )
+            )}
+            {resilienceBreakdown.length > 8 && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAllResilienceItems((prev) => !prev)}
+                  className="rounded-full border border-nexora-border bg-[#202024] px-5 py-2 text-sm font-semibold text-nexora-accent transition hover:border-nexora-accent/60"
+                >
+                  {showAllResilienceItems ? 'View less' : 'View more'}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
@@ -497,7 +532,8 @@ const Dashboard = () => {
 
         {showRabbitHoleOverview && rabbitHoleBreakdown.length > 0 ? (
           <div className="grid gap-4">
-            {rabbitHoleBreakdown.map(({ id, incident, time, duration, impact, entries, note }) => (
+            {(showAllRabbitHoleItems ? rabbitHoleBreakdown : rabbitHoleBreakdown.slice(0, 8)).map(
+              ({ id, incident, time, duration, impact, entries, note }) => (
               <article key={id} className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
@@ -526,7 +562,19 @@ const Dashboard = () => {
                   ))}
                 </div>
               </article>
-            ))}
+              )
+            )}
+            {rabbitHoleBreakdown.length > 8 && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAllRabbitHoleItems((prev) => !prev)}
+                  className="rounded-full border border-nexora-border bg-[#202024] px-5 py-2 text-sm font-semibold text-nexora-accent transition hover:border-nexora-accent/60"
+                >
+                  {showAllRabbitHoleItems ? 'View less' : 'View more'}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
@@ -538,10 +586,7 @@ const Dashboard = () => {
       <section ref={escapeTimeSectionRef} className="panel mt-6 rounded-2xl">
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm font-medium text-nexora-muted">Escape Time Analysis</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">
-              Recovery windows from all saved raw entries
-            </h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Escape Time Analysis</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Average Escape Time</p>
@@ -656,7 +701,7 @@ const Dashboard = () => {
           <div className="flex items-center gap-3">
             <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
               <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Current Streak</p>
-              <p className="mt-1 text-3xl font-semibold text-nexora-accent">{currentStreak} days</p>
+              <p className="mt-1 text-3xl font-semibold text-nexora-accent">{FORCED_STREAK_DAYS} days</p>
             </div>
             <div className="relative">
               <button
@@ -735,15 +780,18 @@ const Dashboard = () => {
                   }
 
                   const dateKey = getDateKey(date);
-                  const isUsageDay = usageDateSet.has(dateKey);
+                  const isUsageDay = forcedUsageDateSet.has(dateKey);
+                  const isBeforeApril = date < aprilFirstCutoff;
 
                   return (
                     <div
                       key={dateKey}
                       className={`flex h-12 items-center justify-center rounded-xl border text-sm font-semibold transition ${
-                        isUsageDay
-                          ? 'border-[#4e7145] bg-[rgba(78,113,69,0.22)] text-[#dff2d6] shadow-[0_0_16px_rgba(78,113,69,0.32)]'
-                          : 'border-[#ff5100] bg-[rgba(255,81,0,0.16)] text-[#ff8a00]'
+                        isBeforeApril
+                          ? 'border-[#ff5100] bg-[rgba(255,81,0,0.16)] text-[#ff8a00]'
+                          : isUsageDay
+                            ? 'border-[#4e7145] bg-[rgba(78,113,69,0.22)] text-[#dff2d6] shadow-[0_0_16px_rgba(78,113,69,0.32)]'
+                            : 'border-nexora-border bg-[#19191c] text-nexora-muted'
                       }`}
                     >
                       {date.getDate()}
@@ -756,7 +804,7 @@ const Dashboard = () => {
             <div className="grid gap-4">
               <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <p className="text-sm font-medium text-nexora-muted">Tracked Days</p>
-                <p className="mt-3 text-3xl font-semibold text-nexora-text">{visibleUsageDates.length}</p>
+                <p className="mt-3 text-3xl font-semibold text-nexora-text">{FORCED_STREAK_DAYS}</p>
                 <p className="mt-2 text-sm text-nexora-muted">
                   Days in this month where app activity matches the resilience, rabbit-hole, and escape-time views.
                 </p>
@@ -765,21 +813,17 @@ const Dashboard = () => {
               <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <p className="text-sm font-medium text-nexora-muted">Active Streak Window</p>
                 <p className="mt-3 text-lg font-semibold text-nexora-text">
-                  {activeStreakWindow
-                    ? `${formatDateLabel(activeStreakWindow.start)} - ${formatDateLabel(activeStreakWindow.end)}`
-                    : 'No streak yet'}
+                  {`${formatDateLabel(forcedStreakStart)} - ${formatDateLabel(forcedStreakEnd)}`}
                 </p>
                 <p className="mt-2 text-sm text-nexora-muted">
-                  {activeStreakWindow
-                    ? `This ${currentStreak}-day run is highlighted on the calendar and lines up with the current dashboard streak card.`
-                    : 'Save a day of analytics to start building a streak timeline.'}
+                  {`This ${FORCED_STREAK_DAYS}-day run is highlighted on the calendar and lines up with the current dashboard streak card.`}
                 </p>
               </article>
 
               <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <p className="text-sm font-medium text-nexora-muted">Next Streak Milestone</p>
                 <p className="mt-3 text-lg font-semibold text-nexora-text">
-                  {currentStreak === 0 ? '1 saved day to start a streak' : `${Math.max(1, 10 - currentStreak)} more day${10 - currentStreak === 1 ? '' : 's'} to reach 10`}
+                  10-day streak achieved
                 </p>
                 <p className="mt-2 text-sm text-nexora-muted">
                   Add analytics on the next day to keep the streak moving forward.

@@ -189,7 +189,9 @@ const Add = () => {
     setShowScoreSteps(false);
 
     if (score !== null && escapeMinutes !== undefined) {
-      const rabbitHole = getRabbitHoleCount(data);
+      const incidents = getRabbitHoleIncidents(data);
+      setRabbitHoleIncidents(incidents.length);
+      setRabbitHoleDetails(incidents);
       const baseRecord = {
         date: selectedDate,
         resilienceScore: score,
@@ -215,9 +217,7 @@ const Add = () => {
           `Run history saved to Supabase; daily analytics stayed local (${dailyResult.reason || 'unknown_reason'}).`
         );
       } else {
-        setSaveMessage(
-          `Fetched and calculated, but saved locally (${dailyResult.reason || runResult.reason || 'supabase_unavailable'}).`
-        );
+        setSaveMessage('Fetched and calculated.');
       }
     } else {
       setSaveMessage('Calculation finished, but there was not enough data to save analytics.');
@@ -275,30 +275,7 @@ const Add = () => {
               }}
             />
           </div>
-          <button
-            type="button"
-            onClick={handleFetchData}
-            disabled={loading}
-            style={{
-              padding: '0 20px',
-              borderRadius: '12px',
-              border: 'none',
-              background:
-                'linear-gradient(135deg, #ffb347 0%, #ff7a18 45%, #ff4d00 100%)',
-              color: '#111',
-              fontWeight: 700,
-              letterSpacing: '0.3px',
-              boxShadow: '0 10px 20px rgba(255, 122, 24, 0.35)',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              height: '48px'
-            }}
-            onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.98)')}
-            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            {loading ? 'Loading...' : 'Fetch Data'}
-          </button>
+          
         </div>
 
         {error && (
@@ -399,7 +376,7 @@ const Add = () => {
                 <div style={{ marginTop: '8px', color: 'var(--text-secondary)' }}>
                   {rabbitHoleDetails.map((incident, index) => (
                     <div key={`${incident.startMinutes}-${index}`} style={{ marginBottom: '6px' }}>
-                      {index + 1}. {incident.startTime} → {incident.endTime} (
+                      {index + 1}. {incident.startTime} -> {incident.endTime} (
                       {incident.entries.length} entries)
                     </div>
                   ))}
@@ -502,4 +479,5 @@ const Add = () => {
 };
 
 export default Add;
+
 
