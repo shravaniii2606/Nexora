@@ -1,197 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-react';
+import { getDailyAnalyticsHistory } from '../api/analyticsApi';
 
-const metrics = [
-  {
-    title: 'Reciliance Score',
-    value: '82',
-    detail: '+6% from last week',
-    icon: ShieldCheck,
-  },
-  {
-    title: 'Rabbit Holes',
-    value: '14',
-    detail: '3 fewer this week',
-    icon: Orbit,
-  },
-  {
-    title: 'Average Escape Time',
-    value: '7.4',
-    detail: 'Recovered in 12 min avg',
-    icon: TimerReset,
-  },
-  {
-    title: 'Streaks',
-    value: '9 days',
-    detail: 'Best streak this month',
-    icon: Flame,
-  },
-];
+const EMPTY_MESSAGE = 'No saved analytics yet. Use Add > Calculate to generate dashboard data.';
 
-const resilienceBreakdown = [
-  {
-    task: 'Healthy Sleep Routine',
-    time: '2:00 AM - 7:00 AM',
-    score: '+6',
-    note: 'A full sleep cycle supported better focus and recovery.',
-    positive: true,
-  },
-  {
-    task: 'Late-Night Snacking',
-    time: '7:15 AM - 7:35 AM',
-    score: '-1',
-    note: 'Late eating slightly impacted sleep quality and recovery.',
-    positive: false,
-  },
-  {
-    task: 'Morning Exercise',
-    time: '8:00 AM - 8:45 AM',
-    score: '+4',
-    note: 'Workout boosted energy and improved consistency for the day.',
-    positive: true,
-  },
-  {
-    task: 'Social Media Scroll',
-    time: '10:30 AM - 11:10 AM',
-    score: '-3',
-    note: 'Unplanned scrolling interrupted your mid-day focus.',
-    positive: false,
-  },
-  {
-    task: 'Study Session',
-    time: '11:30 AM - 1:30 PM',
-    score: '+3',
-    note: 'Focused work block completed as planned.',
-    positive: true,
-  },
-  {
-    task: 'Task Switching',
-    time: '2:00 PM - 2:45 PM',
-    score: '-2',
-    note: 'Jumping between tasks reduced progress on the main goal.',
-    positive: false,
-  },
-  {
-    task: 'Deep Work Block',
-    time: '3:00 PM - 5:00 PM',
-    score: '+5',
-    note: 'Two uninterrupted hours on a priority task added strong momentum.',
-    positive: true,
-  },
-  {
-    task: 'Evening Walk',
-    time: '5:30 PM - 6:00 PM',
-    score: '+2',
-    note: 'A short walk helped reset your attention and reduced stress.',
-    positive: true,
-  },
-  {
-    task: 'Watching Netflix',
-    time: '7:00 PM - 10:00 PM',
-    score: '-4',
-    note: 'Extended passive screen time pulled the score down.',
-    positive: false,
-  },
-  {
-    task: 'Reading',
-    time: '10:15 PM - 11:00 PM',
-    score: '+2',
-    note: 'Intentional offline time improved mental clarity.',
-    positive: true,
-  },
-  {
-    task: 'Journaling',
-    time: '11:10 PM - 11:25 PM',
-    score: '+1',
-    note: 'Reflection helped you process the day and stay aligned.',
-    positive: true,
-  },
-];
+const parseRangeMinutes = (timeRange = '') => {
+  const [startRaw = '', endRaw = ''] = timeRange.split('-').map((value) => value.trim());
+  const parseSingleTime = (raw) => {
+    const match = raw.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+    if (!match) return null;
+    let hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const meridian = match[3]?.toLowerCase();
+    if (meridian === 'pm' && hours !== 12) hours += 12;
+    if (meridian === 'am' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  };
 
-const rabbitHoleBreakdown = [
-  {
-    incident: 'Late-Night Scroll Spiral',
-    time: '12:40 AM - 1:50 AM',
-    duration: '70 min',
-    impact: '-5 focus',
-    entries: ['Instagram reels', 'YouTube shorts', 'Random browsing'],
-    note: 'Consecutive non-productive entries were merged into one rabbit hole incident.',
-  },
-  {
-    incident: 'Mid-Morning Drift',
-    time: '10:30 AM - 11:10 AM',
-    duration: '40 min',
-    impact: '-3 focus',
-    entries: ['Social media scroll', 'Meme pages', 'Chat hopping'],
-    note: 'Short distractions stacked together, so they appear as one incident.',
-  },
-  {
-    incident: 'Post-Lunch Avoidance Loop',
-    time: '2:00 PM - 2:45 PM',
-    duration: '45 min',
-    impact: '-2 focus',
-    entries: ['Task switching', 'Notification checking', 'Inbox refresh'],
-    note: 'This rabbit hole groups consecutive avoidance behaviors in the same window.',
-  },
-  {
-    incident: 'Entertainment Sink',
-    time: '7:00 PM - 10:00 PM',
-    duration: '3 hr',
-    impact: '-4 focus',
-    entries: ['Netflix binge', 'Trailer browsing', 'Episode autoplay'],
-    note: 'Extended passive consumption was merged into a single evening incident.',
-  },
-  {
-    incident: 'Pre-Sleep Drift',
-    time: '11:35 PM - 12:15 AM',
-    duration: '40 min',
-    impact: '-2 focus',
-    entries: ['Online shopping', 'Recommendation feed', 'Random tabs'],
-    note: 'Back-to-back low-value browsing formed one final rabbit hole.',
-  },
-];
-
-const escapeTimeBreakdown = [
-  {
-    label: 'Social Scroll',
-    minutes: 18,
-    color: '#4f000b',
-  },
-  {
-    label: 'Video Drift',
-    minutes: 12,
-    color: '#7b1509',
-  },
-  {
-    label: 'Notification Checking',
-    minutes: 8,
-    color: '#a72906',
-  },
-  {
-    label: 'Idle Switching',
-    minutes: 6,
-    color: '#d33d03',
-  },
-  {
-    label: 'Passive Browsing',
-    minutes: 5,
-    color: '#ff5100',
-  },
-];
-
-const getStartMinutes = (timeRange) => {
-  const [start] = timeRange.split(' - ');
-  const [time, meridiem] = start.split(' ');
-  const [hoursString, minutesString] = time.split(':');
-
-  let hours = Number(hoursString);
-  const minutes = Number(minutesString);
-  const period = meridiem.toUpperCase();
-
-  if (period === 'AM' && hours === 12) hours = 0;
-  if (period === 'PM' && hours !== 12) hours += 12;
-
-  return hours * 60 + minutes;
+  const start = parseSingleTime(startRaw);
+  const end = parseSingleTime(endRaw);
+  if (start === null || end === null) return null;
+  return Math.max(0, end - start);
 };
 
 const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
@@ -219,25 +48,181 @@ const buildDonutSlicePath = (centerX, centerY, outerRadius, innerRadius, startAn
   ].join(' ');
 };
 
-const totalEscapeTime = escapeTimeBreakdown.reduce((total, item) => total + item.minutes, 0);
-const escapeEvents = 4;
-const averageEscapeTime = Math.round((totalEscapeTime / escapeEvents) * 10) / 10;
+const average = (values) =>
+  values.length
+    ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+    : 0;
+
+const normalizeHistory = (history = []) =>
+  [...history]
+    .map((item) => ({
+      date: item.date || item.entry_date,
+      resilienceScore: Number(item.resilienceScore ?? item.resilience_score ?? 0),
+      rabbitHole: Number(item.rabbitHole ?? item.rabbit_hole ?? 0),
+      streaks: Number(item.streaks ?? 0),
+      averageEscapeTime: Number(item.averageEscapeTime ?? item.average_escape_time ?? 0),
+      rawPayload: Array.isArray(item.rawPayload ?? item.raw_payload)
+        ? item.rawPayload ?? item.raw_payload
+        : [],
+    }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+const buildMetrics = (history) => {
+  if (history.length === 0) {
+    return [
+      { title: 'Resilience Score', value: '--', detail: EMPTY_MESSAGE, icon: ShieldCheck },
+      { title: 'Rabbit Holes', value: '--', detail: EMPTY_MESSAGE, icon: Orbit },
+      { title: 'Average Escape Time', value: '--', detail: EMPTY_MESSAGE, icon: TimerReset },
+      { title: 'Streaks', value: '--', detail: EMPTY_MESSAGE, icon: Flame },
+    ];
+  }
+
+  const latest = history[history.length - 1];
+  const previous = history[history.length - 2];
+  const resilienceDelta = previous ? latest.resilienceScore - previous.resilienceScore : 0;
+  const rabbitDelta = previous ? latest.rabbitHole - previous.rabbitHole : 0;
+  const escapeDelta = previous ? latest.averageEscapeTime - previous.averageEscapeTime : 0;
+  const streakDelta = previous ? latest.streaks - previous.streaks : 0;
+
+  return [
+    {
+      title: 'Resilience Score',
+      value: `${latest.resilienceScore}`,
+      detail: previous
+        ? `${resilienceDelta > 0 ? '+' : ''}${resilienceDelta} vs previous saved day`
+        : `Latest score from ${latest.date}`,
+      icon: ShieldCheck,
+    },
+    {
+      title: 'Rabbit Holes',
+      value: `${latest.rabbitHole}`,
+      detail: previous
+        ? `${rabbitDelta > 0 ? '+' : ''}${rabbitDelta} vs previous saved day`
+        : `Latest count from ${latest.date}`,
+      icon: Orbit,
+    },
+    {
+      title: 'Average Escape Time',
+      value: `${latest.averageEscapeTime} min`,
+      detail: previous
+        ? `${escapeDelta > 0 ? '+' : ''}${escapeDelta} min vs previous saved day`
+        : `Latest average from ${latest.date}`,
+      icon: TimerReset,
+    },
+    {
+      title: 'Streaks',
+      value: `${latest.streaks} days`,
+      detail: previous
+        ? `${streakDelta > 0 ? '+' : ''}${streakDelta} days vs previous saved day`
+        : `Latest streak from ${latest.date}`,
+      icon: Flame,
+    },
+  ];
+};
+
+const buildResilienceBreakdown = (entries = []) =>
+  entries.map((entry, index) => {
+    const type = String(entry.type || '').toLowerCase();
+    const positive = type === 'study';
+    return {
+      id: `${entry.id || index}-${entry.time || index}`,
+      task:
+        entry.activityText ||
+        entry.activitytext ||
+        entry.activity ||
+        entry.title ||
+        'Untitled activity',
+      time: entry.time || 'No time recorded',
+      score: positive ? '+3' : '-2',
+      note: positive
+        ? 'Productive study time lifted your resilience for the day.'
+        : 'This non-study block likely reduced your recovery momentum.',
+      positive,
+    };
+  });
+
+const buildRabbitHoleBreakdown = (entries = []) =>
+  entries
+    .filter((entry) => String(entry.type || '').toLowerCase() !== 'study')
+    .map((entry, index) => ({
+      id: `${entry.id || index}-${entry.time || index}`,
+      incident:
+        entry.activityText ||
+        entry.activitytext ||
+        entry.activity ||
+        entry.title ||
+        'Non-study activity',
+      time: entry.time || 'No time recorded',
+      duration: `${parseRangeMinutes(entry.time || '') || 0} min`,
+      impact: '-focus',
+      entries: [String(entry.type || 'non-study')],
+      note: 'Detected from the saved raw payload for the selected day.',
+    }));
+
+const buildEscapeBreakdown = (entries = []) => {
+  const palette = ['#4f000b', '#7b1509', '#a72906', '#d33d03', '#ff5100'];
+  const slices = entries
+    .filter((entry) => String(entry.type || '').toLowerCase() !== 'study')
+    .map((entry, index) => ({
+      label:
+        entry.activityText ||
+        entry.activitytext ||
+        entry.activity ||
+        entry.title ||
+        `Distraction ${index + 1}`,
+      minutes: parseRangeMinutes(entry.time || '') || 5,
+      color: palette[index % palette.length],
+    }));
+
+  return slices.length > 0
+    ? slices
+    : [{ label: 'No distraction data', minutes: 1, color: '#ff5100' }];
+};
 
 const Dashboard = () => {
+  const [history, setHistory] = useState([]);
   const [showResilienceOverview, setShowResilienceOverview] = useState(false);
   const [showRabbitHoleOverview, setShowRabbitHoleOverview] = useState(false);
   const [showEscapeTimeOverview, setShowEscapeTimeOverview] = useState(false);
-  const [activeEscapeSlice, setActiveEscapeSlice] = useState(escapeTimeBreakdown[0].label);
+  const [activeEscapeSlice, setActiveEscapeSlice] = useState('');
   const [hoveredEscapeSlice, setHoveredEscapeSlice] = useState(null);
   const resilienceSectionRef = useRef(null);
   const rabbitHoleSectionRef = useRef(null);
   const escapeTimeSectionRef = useRef(null);
-  const sortedResilienceBreakdown = [...resilienceBreakdown].sort(
-    (first, second) => getStartMinutes(first.time) - getStartMinutes(second.time)
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      const savedHistory = await getDailyAnalyticsHistory();
+      setHistory(normalizeHistory(savedHistory));
+    };
+
+    loadHistory();
+  }, []);
+
+  const latestDay = history[history.length - 1] || null;
+  const metrics = useMemo(() => buildMetrics(history), [history]);
+  const resilienceBreakdown = useMemo(
+    () => buildResilienceBreakdown(latestDay?.rawPayload || []),
+    [latestDay]
   );
-  const sortedRabbitHoleBreakdown = [...rabbitHoleBreakdown].sort(
-    (first, second) => getStartMinutes(first.time) - getStartMinutes(second.time)
+  const rabbitHoleBreakdown = useMemo(
+    () => buildRabbitHoleBreakdown(latestDay?.rawPayload || []),
+    [latestDay]
   );
+  const escapeTimeBreakdown = useMemo(
+    () => buildEscapeBreakdown(latestDay?.rawPayload || []),
+    [latestDay]
+  );
+  const totalEscapeTime = escapeTimeBreakdown.reduce((total, item) => total + item.minutes, 0);
+  const averageEscapeTime = latestDay?.averageEscapeTime ?? average(
+    escapeTimeBreakdown.map((item) => item.minutes)
+  );
+
+  useEffect(() => {
+    if (escapeTimeBreakdown.length > 0) {
+      setActiveEscapeSlice(escapeTimeBreakdown[0].label);
+    }
+  }, [escapeTimeBreakdown]);
 
   useEffect(() => {
     if (showResilienceOverview && resilienceSectionRef.current) {
@@ -257,53 +242,39 @@ const Dashboard = () => {
     }
   }, [showEscapeTimeOverview]);
 
-  const handleResilienceClick = () => {
-    setShowResilienceOverview(true);
-    if (resilienceSectionRef.current) {
-      resilienceSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
-  const handleRabbitHoleClick = () => {
-    setShowRabbitHoleOverview(true);
-    if (rabbitHoleSectionRef.current) {
-      rabbitHoleSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
-  const handleEscapeTimeClick = () => {
-    setShowEscapeTimeOverview(true);
-    if (escapeTimeSectionRef.current) {
-      escapeTimeSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
   const activeEscapeSegment =
-    escapeTimeBreakdown.find((segment) => segment.label === activeEscapeSlice) ?? escapeTimeBreakdown[0];
-  const highlightedEscapeLabel = hoveredEscapeSlice ?? activeEscapeSegment.label;
+    escapeTimeBreakdown.find((segment) => segment.label === activeEscapeSlice) ??
+    escapeTimeBreakdown[0];
+  const highlightedEscapeLabel = hoveredEscapeSlice ?? activeEscapeSegment?.label;
   const highlightedEscapeSegment =
-    escapeTimeBreakdown.find((segment) => segment.label === highlightedEscapeLabel) ?? activeEscapeSegment;
+    escapeTimeBreakdown.find((segment) => segment.label === highlightedEscapeLabel) ??
+    activeEscapeSegment;
 
   return (
     <div>
       <div className="page-header">
         <div className="breadcrumb">Pages / Dashboard</div>
         <h1 className="page-title">Main Dashboard</h1>
+        <p className="page-subtitle">
+          {latestDay
+            ? `Showing live dashboard data from ${latestDay.date}.`
+            : 'Dashboard will populate from saved user analytics as soon as you calculate a day.'}
+        </p>
       </div>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         {metrics.map(({ title, value, detail, icon: Icon }) => {
-          const isResilienceCard = title === 'Reciliance Score';
+          const isResilienceCard = title === 'Resilience Score';
           const isRabbitHoleCard = title === 'Rabbit Holes';
           const isEscapeTimeCard = title === 'Average Escape Time';
           const isClickable = isResilienceCard || isRabbitHoleCard || isEscapeTimeCard;
 
           const handleClick = isResilienceCard
-            ? handleResilienceClick
+            ? () => setShowResilienceOverview(true)
             : isRabbitHoleCard
-              ? handleRabbitHoleClick
+              ? () => setShowRabbitHoleOverview(true)
               : isEscapeTimeCard
-                ? handleEscapeTimeClick
+                ? () => setShowEscapeTimeOverview(true)
                 : undefined;
 
           return (
@@ -326,47 +297,31 @@ const Dashboard = () => {
                 </div>
                 <div className="text-3xl font-semibold tracking-tight text-nexora-text">{value}</div>
                 <p className="mt-2 text-sm text-nexora-muted">{detail}</p>
-                {isResilienceCard && (
-                  <p className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-nexora-accent">
-                    Tap to view score breakdown
-                  </p>
-                )}
-                {isRabbitHoleCard && (
-                  <p className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-nexora-accent">
-                    Tap to view incident breakdown
-                  </p>
-                )}
-                {isEscapeTimeCard && (
-                  <p className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-nexora-accent">
-                    Tap to view escape time analysis
-                  </p>
-                )}
               </button>
             </article>
           );
         })}
       </section>
 
-      <section
-        ref={resilienceSectionRef}
-        className="panel mt-6 rounded-2xl"
-      >
+      <section ref={resilienceSectionRef} className="panel mt-6 rounded-2xl">
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Resilience Overview</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">How your resilience score is built</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Latest saved day activity impact</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Current Score</p>
-            <p className="mt-1 text-3xl font-semibold text-nexora-accent">82</p>
+            <p className="mt-1 text-3xl font-semibold text-nexora-accent">
+              {latestDay ? latestDay.resilienceScore : '--'}
+            </p>
           </div>
         </div>
 
-        {showResilienceOverview ? (
+        {showResilienceOverview && resilienceBreakdown.length > 0 ? (
           <div className="grid gap-4">
-            {sortedResilienceBreakdown.map(({ task, time, score, note, positive }) => (
+            {resilienceBreakdown.map(({ id, task, time, score, note, positive }) => (
               <article
-                key={`${task}-${time}`}
+                key={id}
                 className="flex flex-col gap-4 rounded-2xl border border-nexora-border bg-[#202024] p-5 md:flex-row md:items-center md:justify-between"
               >
                 <div>
@@ -388,36 +343,29 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
-            <p className="max-w-md text-sm text-nexora-muted">
-              Click the <span className="text-nexora-accent">Reciliance Score</span> card above to open the score
-              breakdown for your tasks and habits.
-            </p>
+            <p className="max-w-md text-sm text-nexora-muted">{EMPTY_MESSAGE}</p>
           </div>
         )}
       </section>
 
-      <section
-        ref={rabbitHoleSectionRef}
-        className="panel mt-6 rounded-2xl"
-      >
+      <section ref={rabbitHoleSectionRef} className="panel mt-6 rounded-2xl">
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Rabbit Hole Overview</p>
-            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Merged non-productive incidents</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-nexora-text">Latest non-study incidents</h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Detected Incidents</p>
-            <p className="mt-1 text-3xl font-semibold text-nexora-accent">14</p>
+            <p className="mt-1 text-3xl font-semibold text-nexora-accent">
+              {latestDay ? latestDay.rabbitHole : '--'}
+            </p>
           </div>
         </div>
 
-        {showRabbitHoleOverview ? (
+        {showRabbitHoleOverview && rabbitHoleBreakdown.length > 0 ? (
           <div className="grid gap-4">
-            {sortedRabbitHoleBreakdown.map(({ incident, time, duration, impact, entries, note }) => (
-              <article
-                key={`${incident}-${time}`}
-                className="rounded-2xl border border-nexora-border bg-[#202024] p-5"
-              >
+            {rabbitHoleBreakdown.map(({ id, incident, time, duration, impact, entries, note }) => (
+              <article key={id} className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <h3 className="text-lg font-semibold text-nexora-text">{incident}</h3>
@@ -449,23 +397,17 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
-            <p className="max-w-md text-sm text-nexora-muted">
-              Click the <span className="text-nexora-accent">Rabbit Holes</span> card above to open the merged
-              incident breakdown below the resilience section.
-            </p>
+            <p className="max-w-md text-sm text-nexora-muted">{EMPTY_MESSAGE}</p>
           </div>
         )}
       </section>
 
-      <section
-        ref={escapeTimeSectionRef}
-        className="panel mt-6 rounded-2xl"
-      >
+      <section ref={escapeTimeSectionRef} className="panel mt-6 rounded-2xl">
         <div className="mb-6 flex flex-col gap-3 border-b border-nexora-border pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-nexora-muted">Escape Time Analysis</p>
             <h2 className="mt-1 text-2xl font-semibold text-nexora-text">
-              Time from distraction onset to productive recovery
+              Recovery windows from the latest saved raw entries
             </h2>
           </div>
           <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
@@ -474,7 +416,7 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {showEscapeTimeOverview ? (
+        {showEscapeTimeOverview && highlightedEscapeSegment ? (
           <div className="rounded-2xl border border-nexora-border bg-[#202024] p-6">
             <div className="grid gap-8 xl:grid-cols-[380px_minmax(0,1fr)] xl:items-center">
               <div className="flex flex-col items-center justify-center">
@@ -494,19 +436,17 @@ const Dashboard = () => {
 
                         accumulated += fraction;
 
-                        const path = buildDonutSlicePath(
-                          center,
-                          center,
-                          outerRadius,
-                          innerRadius,
-                          startAngle,
-                          endAngle
-                        );
-
                         return (
                           <path
                             key={segment.label}
-                            d={path}
+                            d={buildDonutSlicePath(
+                              center,
+                              center,
+                              outerRadius,
+                              innerRadius,
+                              startAngle,
+                              endAngle
+                            )}
                             fill={segment.color}
                             stroke="#141416"
                             strokeWidth={3}
@@ -532,10 +472,6 @@ const Dashboard = () => {
                     <span className="mt-1 text-sm text-nexora-muted">{highlightedEscapeSegment.minutes} min</span>
                   </div>
                 </div>
-
-                <p className="mt-6 text-center text-sm text-nexora-muted">
-                  Hover a slice to preview it, then click to keep it selected.
-                </p>
               </div>
 
               <div className="grid gap-3">
@@ -569,10 +505,7 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-nexora-border bg-[#19191c] text-center">
-            <p className="max-w-md text-sm text-nexora-muted">
-              Click the <span className="text-nexora-accent">Average Escape Time</span> card above to open the
-              pie-chart view and calculation steps below the rabbit-hole section.
-            </p>
+            <p className="max-w-md text-sm text-nexora-muted">{EMPTY_MESSAGE}</p>
           </div>
         )}
       </section>

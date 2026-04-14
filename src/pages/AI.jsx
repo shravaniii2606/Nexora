@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react';
 import ChatWindow from '../components/ai/ChatWindow';
 import ChatInput from '../components/ai/ChatInput';
 import QuickMessages from '../components/ai/QuickMessages';
-import { sendMessage } from '../api/openRouterApi';
+import { getAiConnectionStatus, sendMessage } from '../api/openRouterApi';
+import { getDailyAnalyticsHistory } from '../api/analyticsApi';
+import { buildDashboardSummary } from '../utils/dashboardSummary';
 import './AI.css';
 
 const AI = () => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const aiStatus = getAiConnectionStatus();
 
   // Initialize with welcome message
   useEffect(() => {
@@ -19,13 +22,21 @@ const AI = () => {
   }, []);
 
   const handleSendMessage = async (userMessage) => {
+    const conversationHistory = messages.map((message) => ({
+      role: message.sender === 'ai' ? 'assistant' : 'user',
+      content: message.text,
+    }));
+
     // Add user message
     setMessages(prev => [...prev, { text: userMessage, sender: 'user' }]);
     setIsLoading(true);
 
     try {
+      const history = await getDailyAnalyticsHistory();
+      const dashboardSummary = buildDashboardSummary(history);
+
       // Get AI response
-      const response = await sendMessage(userMessage);
+      const response = await sendMessage(userMessage, conversationHistory, dashboardSummary);
       
       // Add AI response
       if (response.success) {
@@ -46,6 +57,11 @@ const AI = () => {
       <div className="page-header">
         <div className="breadcrumb">Pages / AI</div>
         <h1 className="page-title">AI Assistant</h1>
+        <p className="page-subtitle">
+          {aiStatus.hasApiKey
+            ? `Connected to ${aiStatus.model}.`
+            : 'No OpenRouter key detected. Restart the Vite server after adding .env.local.'}
+        </p>
       </div>
       <div className="ai-container">
         <QuickMessages onSelectMessage={handleSendMessage} />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { getDailyAnalyticsHistory } from '../api/analyticsApi';
 
 const TIMEFRAME_OPTIONS = [
   { id: 'daily', label: 'Daily' },
@@ -40,32 +41,6 @@ const SAMPLE_ENTRIES = [
   { date: '2026-04-06', resilienceScore: 79, rabbitHole: 1, averageEscapeTime: 15 },
   { date: '2026-04-13', resilienceScore: 83, rabbitHole: 1, averageEscapeTime: 13 },
 ];
-
-const parseStoredEntries = () => {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  const possibleKeys = ['nexoraEntries', 'entries', 'allEntries'];
-
-  for (const key of possibleKeys) {
-    const rawValue = window.localStorage.getItem(key);
-    if (!rawValue) {
-      continue;
-    }
-
-    try {
-      const parsed = JSON.parse(rawValue);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return [];
-};
 
 const normalizeEntry = (entry, index) => {
   const fallbackDate = SAMPLE_ENTRIES[index % SAMPLE_ENTRIES.length].date;
@@ -176,8 +151,28 @@ const getSummary = (chartData, metric) => {
 const Analytics = () => {
   const [timeframe, setTimeframe] = useState('daily');
   const [metric, setMetric] = useState('resilienceScore');
+  const [storedEntries, setStoredEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const storedEntries = parseStoredEntries();
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAnalytics = async () => {
+      setLoading(true);
+      const history = await getDailyAnalyticsHistory();
+      if (isMounted) {
+        setStoredEntries(history);
+        setLoading(false);
+      }
+    };
+
+    loadAnalytics();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const rawEntries = storedEntries.length > 0 ? storedEntries : SAMPLE_ENTRIES;
   const normalizedEntries = rawEntries.map(normalizeEntry);
   const chartData = aggregateEntries(normalizedEntries, timeframe);
@@ -270,6 +265,7 @@ const Analytics = () => {
             <h2 className="analytics-panel-title">{metricConfig.label} Graph</h2>
             <p className="analytics-panel-copy">
               The chart automatically re-groups your analytics data by the selected timeframe.
+              {loading ? ' Loading saved history...' : ''}
             </p>
           </div>
           <div className={`analytics-badge ${usingSampleData ? 'is-sample' : ''}`}>
