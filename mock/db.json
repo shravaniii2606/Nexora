@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "title": "Instagram",
+      "date": "2026-04-12",
+      "minutes": 25,
+      "notes": "Scrolled after lunch"
+    },
+    {
+      "id": 2,
+      "title": "YouTube",
+      "date": "2026-04-13",
+      "minutes": 40,
+      "notes": "Watched tech reviews"
+    }
+  ]
+}
