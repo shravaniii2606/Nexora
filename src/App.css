@@ -807,6 +807,18 @@ button {
     var(--panel-bg);
 }
 
+.resilience-sprintwise-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.resilience-sprintwise-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
 @media (max-width: 1100px) {
   .sprints-top-grid,
   .sprints-summary-grid,
@@ -816,7 +828,8 @@ button {
   .analytics-summary,
   .resilience-hero-grid,
   .resilience-bottom-grid,
-  .resilience-stats-grid {
+  .resilience-stats-grid,
+  .resilience-sprintwise-grid {
     grid-template-columns: 1fr;
   }
 }

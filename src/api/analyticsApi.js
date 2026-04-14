@@ -1,6 +1,7 @@
 const STORAGE_KEY = 'dailyAnalyticsHistory';
 const SPRINT_STORAGE_KEY = 'nexora-sprints';
 const ACTIVE_SPRINT_STORAGE_KEY = 'nexora-active-sprint';
+const SPRINT_SESSION_CACHE_KEY = 'nexora-sprint-sessions-cache';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -84,6 +85,37 @@ const writeLocalAnalytics = (records) => {
   }
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sortByDate(records)));
+};
+
+const readLocalSprintSessions = () => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(SPRINT_SESSION_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? [...parsed].sort((a, b) => new Date(a.completedAt || a.completed_at) - new Date(b.completedAt || b.completed_at))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeLocalSprintSessions = (records) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const sorted = [...records].sort(
+    (a, b) => new Date(a.completedAt || a.completed_at) - new Date(b.completedAt || b.completed_at)
+  );
+  window.localStorage.setItem(SPRINT_SESSION_CACHE_KEY, JSON.stringify(sorted));
 };
 
 export const getDailyAnalyticsHistory = async () => {
@@ -254,6 +286,156 @@ export const saveAddCalculationRun = async (run) => {
     return {
       success: false,
       source: 'supabase',
+      reason: 'network_or_runtime_error',
+      details: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+export const getSprintSessions = async () => {
+  const localRecords = readLocalSprintSessions();
+
+  if (!hasSupabaseConfig) {
+    return localRecords;
+  }
+
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/sprint_sessions?select=sprint_id,sprint_number,title,focus_task,entry_date,started_at,completed_at,duration_minutes,rabbit_holes,focus_score,resilience_score,recovery_speed,distraction_depth,productive_recovery,total_time_spent_distracted_ms,total_focus_time_after_return_ms,average_time_spent_distracted_ms,average_remaining_sprint_time_ms,source,tools,rabbit_hole_log&user_id=eq.${encodeURIComponent(
+        ANALYTICS_USER_ID
+      )}&order=completed_at.asc`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Supabase sprint fetch failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const normalized = Array.isArray(data)
+      ? data.map((item) => ({
+          sprintId: item.sprint_id,
+          sprintNumber: Number(item.sprint_number ?? 0),
+          title: item.title,
+          focusTask: item.focus_task || '',
+          date: item.entry_date,
+          startedAt: item.started_at,
+          completedAt: item.completed_at,
+          durationMinutes: Number(item.duration_minutes ?? 0),
+          rabbitHoles: Number(item.rabbit_holes ?? 0),
+          focusScore: Number(item.focus_score ?? 0),
+          resilienceMetrics: {
+            resilienceScore: Number(item.resilience_score ?? 0),
+            recoverySpeed: Number(item.recovery_speed ?? 0),
+            distractionDepth: Number(item.distraction_depth ?? 0),
+            productiveRecovery: Number(item.productive_recovery ?? 0),
+          },
+          totals: {
+            timeSpentDistractedMs: Number(item.total_time_spent_distracted_ms ?? 0),
+            focusTimeAfterReturnMs: Number(item.total_focus_time_after_return_ms ?? 0),
+            averageTimeSpentDistractedMs: Number(item.average_time_spent_distracted_ms ?? 0),
+            averageRemainingSprintTimeMs: Number(item.average_remaining_sprint_time_ms ?? 0),
+          },
+          source: item.source || 'supabase',
+          tools: Array.isArray(item.tools) ? item.tools : [],
+          rabbitHoleLog: Array.isArray(item.rabbit_hole_log) ? item.rabbit_hole_log : [],
+        }))
+      : [];
+
+    if (normalized.length > 0) {
+      writeLocalSprintSessions(normalized);
+      return normalized;
+    }
+
+    return localRecords;
+  } catch {
+    return localRecords;
+  }
+};
+
+export const saveSprintSession = async (session) => {
+  const localRecords = readLocalSprintSessions();
+  const filtered = localRecords.filter((item) => item.sprintId !== session.sprintId);
+  const nextRecords = [...filtered, session];
+  writeLocalSprintSessions(nextRecords);
+
+  if (!hasSupabaseConfig) {
+    return { success: false, source: 'local', reason: 'missing_config' };
+  }
+
+  try {
+    const payload = {
+      user_id: ANALYTICS_USER_ID,
+      sprint_id: session.sprintId,
+      sprint_number: session.sprintNumber ?? null,
+      title: session.title,
+      focus_task: session.focusTask ?? '',
+      entry_date: session.date,
+      started_at: session.startedAt,
+      completed_at: session.completedAt,
+      duration_minutes: session.durationMinutes,
+      rabbit_holes: session.rabbitHoles ?? 0,
+      focus_score: session.focusScore ?? 100,
+      resilience_score: session.resilienceMetrics?.resilienceScore ?? 100,
+      recovery_speed: session.resilienceMetrics?.recoverySpeed ?? 100,
+      distraction_depth: session.resilienceMetrics?.distractionDepth ?? 100,
+      productive_recovery: session.resilienceMetrics?.productiveRecovery ?? 100,
+      total_time_spent_distracted_ms: session.totals?.timeSpentDistractedMs ?? 0,
+      total_focus_time_after_return_ms: session.totals?.focusTimeAfterReturnMs ?? 0,
+      average_time_spent_distracted_ms: session.totals?.averageTimeSpentDistractedMs ?? 0,
+      average_remaining_sprint_time_ms: session.totals?.averageRemainingSprintTimeMs ?? 0,
+      source: session.source || 'sprint',
+      tools: session.tools ?? [],
+      rabbit_hole_log: session.rabbitHoleLog ?? [],
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/sprint_sessions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const retryResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/sprint_sessions?on_conflict=user_id,sprint_id`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            Prefer: 'resolution=merge-duplicates,return=representation',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!retryResponse.ok) {
+        const body = await retryResponse.text();
+        return {
+          success: false,
+          source: 'local',
+          reason: `supabase_save_failed:${retryResponse.status}`,
+          details: body,
+        };
+      }
+    }
+
+    return { success: true, source: 'supabase' };
+  } catch (error) {
+    return {
+      success: false,
+      source: 'local',
       reason: 'network_or_runtime_error',
       details: error instanceof Error ? error.message : String(error),
     };

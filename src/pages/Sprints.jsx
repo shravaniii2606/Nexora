@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Play, Pause, RotateCcw, Flag, Rabbit, Clock3, Target } from 'lucide-react';
+import { saveSprintSession } from '../api/analyticsApi';
 
 const STORAGE_KEY = 'nexora-sprints';
 const ACTIVE_SPRINT_STORAGE_KEY = 'nexora-active-sprint';
@@ -7,6 +8,14 @@ const SPRINTS_UPDATED_EVENT = 'nexora-sprints-updated';
 const DEFAULT_DURATION = 25;
 const DEFAULT_THRESHOLD_SECONDS = 120;
 const RABBIT_HOLE_PENALTY = 10;
+const getLocalDateKey = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const getTodayDate = () => getLocalDateKey();
 
 const readStoredSprints = () => {
   try {
@@ -51,6 +60,7 @@ const readStoredActiveSprint = () => {
 const createDefaultForm = () => ({
   title: '',
   focusTask: '',
+  date: getTodayDate(),
   durationMinutes: DEFAULT_DURATION,
   toolInput: '',
   tools: ['VS Code', 'Google Classroom'],
@@ -64,6 +74,55 @@ const formatTime = (seconds) => {
 };
 
 const calculateScore = (rabbitHoles) => Math.max(0, 100 - rabbitHoles * RABBIT_HOLE_PENALTY);
+
+const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+
+const calculateResilienceMetrics = (event, sprintDurationMs) => {
+  const safeSprintDurationMs = Math.max(sprintDurationMs, 1);
+  const safeRemainingSprintTime = Math.max(event.remainingSprintTime || 0, 1);
+  const timeToReturn = Number(event.timeSpentDistracted || 0) / safeSprintDurationMs;
+  const recoverySpeed = clamp(1 - timeToReturn);
+  const distractionDepth = clamp(Number(event.timeSpentDistracted || 0) / safeSprintDurationMs);
+  const productiveRecovery = clamp((event.focusTimeAfter || 0) / safeRemainingSprintTime);
+  const score =
+    recoverySpeed * 0.4 +
+    (1 - distractionDepth) * 0.3 +
+    productiveRecovery * 0.3;
+
+  return {
+    recoverySpeed,
+    distractionDepth,
+    productiveRecovery,
+    resilienceScore: Math.round(clamp(score) * 100),
+  };
+};
+
+const finalizeRabbitHoleLog = (rabbitHoleLog = [], focusReturnTime, finalTimestamp, sprintDurationMs) => {
+  if (!focusReturnTime || rabbitHoleLog.length === 0) {
+    return rabbitHoleLog;
+  }
+
+  const nextLog = [...rabbitHoleLog];
+  const lastIndex = nextLog.length - 1;
+  const lastEvent = nextLog[lastIndex];
+
+  if (!lastEvent || lastEvent.focusTimeAfter !== null) {
+    return rabbitHoleLog;
+  }
+
+  const focusTimeAfter = Math.max(0, finalTimestamp - focusReturnTime);
+  const enrichedEvent = {
+    ...lastEvent,
+    focusTimeAfter,
+  };
+
+  nextLog[lastIndex] = {
+    ...enrichedEvent,
+    metrics: calculateResilienceMetrics(enrichedEvent, sprintDurationMs),
+  };
+
+  return nextLog;
+};
 
 const getScoreStatus = (rabbitHoles) => {
   if (rabbitHoles === 0) {
@@ -79,10 +138,13 @@ const getScoreStatus = (rabbitHoles) => {
 
 const Sprints = () => {
   const initialActiveSprint = readStoredActiveSprint();
+  const initialRabbitHoles = Number(initialActiveSprint?.rabbitHoles) || 0;
   const [showCreateCard, setShowCreateCard] = useState(false);
   const [form, setForm] = useState(createDefaultForm);
   const [savedSprints, setSavedSprints] = useState(() => readStoredSprints());
   const [activeSprint, setActiveSprint] = useState(initialActiveSprint);
+  const [rabbitHoles, setRabbitHoles] = useState(initialRabbitHoles);
+  const [isDistracted, setIsDistracted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(
     () => Number(initialActiveSprint?.timeLeftSeconds) || DEFAULT_DURATION * 60
   );
@@ -97,6 +159,12 @@ const Sprints = () => {
       }
   );
   const hiddenAtRef = useRef(null);
+  const diversionStart = useRef(null);
+  const focusReturnTime = useRef(null);
+
+  useEffect(() => {
+    setRabbitHoles(Number(activeSprint?.rabbitHoles) || 0);
+  }, [activeSprint?.rabbitHoles]);
 
   useEffect(() => {
     persistSprints(savedSprints);
@@ -135,30 +203,53 @@ const Sprints = () => {
   }, [isRunning, activeSprint]);
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!activeSprint || !isRunning) return;
+    const startDistraction = (reasonLabel = 'Tab hidden. Timing diversion...') => {
+      if (!activeSprint || !isRunning || hiddenAtRef.current) return;
 
-      if (document.visibilityState === 'hidden') {
-        const hiddenAt = Date.now();
-        hiddenAtRef.current = hiddenAt;
-        setVisibilityDebug({
-          hiddenAt: new Date(hiddenAt).toLocaleTimeString(),
-          returnedAt: null,
-          hiddenForSeconds: 0,
-          status: 'Tab hidden. Timing diversion...',
-        });
-        return;
-      }
+      const hiddenAt = Date.now();
+      hiddenAtRef.current = hiddenAt;
+      diversionStart.current = hiddenAt;
+      setIsDistracted(true);
+      setActiveSprint((current) => {
+        if (!current) return current;
+        const sprintDurationMs = current.durationMinutes * 60 * 1000;
+        const nextRabbitHoleLog = finalizeRabbitHoleLog(
+          current.rabbitHoleLog || [],
+          focusReturnTime.current,
+          hiddenAt,
+          sprintDurationMs
+        );
 
-      if (!hiddenAtRef.current) return;
+        if (nextRabbitHoleLog === (current.rabbitHoleLog || [])) {
+          return current;
+        }
 
-      const hiddenForSeconds = Math.floor((Date.now() - hiddenAtRef.current) / 1000);
+        return {
+          ...current,
+          rabbitHoleLog: nextRabbitHoleLog,
+        };
+      });
+      setVisibilityDebug({
+        hiddenAt: new Date(hiddenAt).toLocaleTimeString(),
+        returnedAt: null,
+        hiddenForSeconds: 0,
+        status: reasonLabel,
+      });
+    };
+
+    const endDistraction = () => {
+      if (!activeSprint || !isRunning || !hiddenAtRef.current) return;
+
+      const returnedAt = Date.now();
+      const hiddenForSeconds = Math.floor((returnedAt - hiddenAtRef.current) / 1000);
       const hiddenAtLabel = new Date(hiddenAtRef.current).toLocaleTimeString();
+      setIsDistracted(false);
+      focusReturnTime.current = returnedAt;
       hiddenAtRef.current = null;
 
       setVisibilityDebug({
         hiddenAt: hiddenAtLabel,
-        returnedAt: new Date().toLocaleTimeString(),
+        returnedAt: new Date(returnedAt).toLocaleTimeString(),
         hiddenForSeconds,
         status:
           hiddenForSeconds >= DEFAULT_THRESHOLD_SECONDS
@@ -167,18 +258,55 @@ const Sprints = () => {
       });
 
       if (hiddenForSeconds >= DEFAULT_THRESHOLD_SECONDS) {
-        registerRabbitHole(`Focus left for ${Math.floor(hiddenForSeconds / 60)}m ${hiddenForSeconds % 60}s`);
+        registerRabbitHole(
+          `Focus left for ${Math.floor(hiddenForSeconds / 60)}m ${hiddenForSeconds % 60}s`,
+          returnedAt
+        );
       }
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        startDistraction('Tab hidden. Timing diversion...');
+      } else if (document.visibilityState === 'visible') {
+        endDistraction();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      startDistraction('Window lost focus. Timing diversion...');
+    };
+
+    const handleWindowFocus = () => {
+      endDistraction();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
   }, [activeSprint, isRunning]);
 
-  const registerRabbitHole = (reason = 'Focus shifted away from the sprint task') => {
+  const registerRabbitHole = (reason = 'Focus shifted away from the sprint task', returnTimestamp = Date.now()) => {
     setActiveSprint((current) => {
       if (!current) return current;
       const updatedRabbitHoles = current.rabbitHoles + 1;
+      const distractionStart = diversionStart.current || returnTimestamp;
+      const timeSpentDistracted = Math.max(0, returnTimestamp - distractionStart);
+      const remainingSprintTime = Math.max(0, timeLeft * 1000);
+      const rabbitHoleEvent = {
+        id: `${Date.now()}-${updatedRabbitHoles}`,
+        distractionStart,
+        distractionEnd: returnTimestamp,
+        timeSpentDistracted,
+        remainingSprintTime,
+        focusTimeAfter: null,
+      };
       const next = {
         ...current,
         rabbitHoles: updatedRabbitHoles,
@@ -186,15 +314,18 @@ const Sprints = () => {
         timeLeftSeconds: timeLeft,
         isRunning,
         visibilityDebug,
+        rabbitHoleLog: [...(current.rabbitHoleLog || []), rabbitHoleEvent],
         events: [
           ...current.events,
           {
-            id: `${Date.now()}-${updatedRabbitHoles}`,
+            id: rabbitHoleEvent.id,
             reason,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
         ],
       };
+      diversionStart.current = null;
+      setRabbitHoles(updatedRabbitHoles);
       persistActiveSprint(next);
       return next;
     });
@@ -203,8 +334,13 @@ const Sprints = () => {
   const startSprint = () => {
     const durationMinutes = Number(form.durationMinutes) || DEFAULT_DURATION;
     const tools = form.tools.length > 0 ? form.tools : ['VS Code'];
+    const sprintId = `${Date.now()}`;
 
     hiddenAtRef.current = null;
+    diversionStart.current = null;
+    focusReturnTime.current = null;
+    setRabbitHoles(0);
+    setIsDistracted(false);
     setVisibilityDebug({
       hiddenAt: null,
       returnedAt: null,
@@ -212,13 +348,16 @@ const Sprints = () => {
       status: 'Sprint running. Keep this tab visible to avoid rabbit holes.',
     });
     const nextActiveSprint = {
-      id: `${Date.now()}`,
+      id: sprintId,
+      sprintId,
       sprintNumber: savedSprints.length + 1,
       title: form.title.trim() || `Sprint ${savedSprints.length + 1}`,
       focusTask: form.focusTask.trim() || 'Deep work session',
+      sprintDate: form.date || getTodayDate(),
       durationMinutes,
       tools,
       rabbitHoles: 0,
+      rabbitHoleLog: [],
       focusScore: 100,
       startedAt: new Date().toISOString(),
       events: [],
@@ -242,7 +381,7 @@ const Sprints = () => {
   const finishSprint = () => {
     setIsRunning(false);
     hiddenAtRef.current = null;
-    persistActiveSprint(null);
+    diversionStart.current = null;
     setVisibilityDebug((current) => ({
       ...current,
       status: 'Sprint finished',
@@ -250,16 +389,78 @@ const Sprints = () => {
 
     setActiveSprint((current) => {
       if (!current) return null;
+      const sprintDurationMs = current.durationMinutes * 60 * 1000;
+      const finalizedRabbitHoleLog = finalizeRabbitHoleLog(
+        current.rabbitHoleLog || [],
+        focusReturnTime.current,
+        Date.now(),
+        sprintDurationMs
+      );
+      const averagedMetrics = finalizedRabbitHoleLog.length
+        ? finalizedRabbitHoleLog.reduce(
+            (totals, event) => ({
+              recoverySpeed: totals.recoverySpeed + (event.metrics?.recoverySpeed || 0),
+              distractionDepth: totals.distractionDepth + (event.metrics?.distractionDepth || 0),
+              productiveRecovery: totals.productiveRecovery + (event.metrics?.productiveRecovery || 0),
+              resilienceScore: totals.resilienceScore + (event.metrics?.resilienceScore || 0),
+            }),
+            { recoverySpeed: 0, distractionDepth: 0, productiveRecovery: 0, resilienceScore: 0 }
+          )
+        : null;
       const score = calculateScore(current.rabbitHoles);
       const scoreStatus = getScoreStatus(current.rabbitHoles);
+      const completedAt = new Date().toISOString();
+      const sprintDate = current.sprintDate || getLocalDateKey(current.startedAt || completedAt);
+      const totalTimeSpentDistractedMs = finalizedRabbitHoleLog.reduce(
+        (sum, event) => sum + Number(event.timeSpentDistracted || 0),
+        0
+      );
+      const totalFocusTimeAfterReturnMs = finalizedRabbitHoleLog.reduce(
+        (sum, event) => sum + Number(event.focusTimeAfter || 0),
+        0
+      );
+      const averageTimeSpentDistractedMs = finalizedRabbitHoleLog.length
+        ? Math.round(totalTimeSpentDistractedMs / finalizedRabbitHoleLog.length)
+        : 0;
+      const averageRemainingSprintTimeMs = finalizedRabbitHoleLog.length
+        ? Math.round(
+            finalizedRabbitHoleLog.reduce((sum, event) => sum + Number(event.remainingSprintTime || 0), 0) /
+              finalizedRabbitHoleLog.length
+          )
+        : 0;
       const completedSprint = {
         ...current,
-        completedAt: new Date().toISOString(),
+        sprintId: current.sprintId || current.id,
+        completedAt,
         score,
         scoreStatus,
+        rabbitHoleLog: finalizedRabbitHoleLog,
+        resilienceMetrics: averagedMetrics
+          ? {
+              recoverySpeed: Math.round((averagedMetrics.recoverySpeed / finalizedRabbitHoleLog.length) * 100),
+              distractionDepth: Math.round((averagedMetrics.distractionDepth / finalizedRabbitHoleLog.length) * 100),
+              productiveRecovery: Math.round((averagedMetrics.productiveRecovery / finalizedRabbitHoleLog.length) * 100),
+              resilienceScore: Math.round(averagedMetrics.resilienceScore / finalizedRabbitHoleLog.length),
+            }
+          : {
+              recoverySpeed: 100,
+              distractionDepth: 0,
+              productiveRecovery: 100,
+              resilienceScore: 100,
+            },
+        totals: {
+          timeSpentDistractedMs: totalTimeSpentDistractedMs,
+          focusTimeAfterReturnMs: totalFocusTimeAfterReturnMs,
+          averageTimeSpentDistractedMs,
+          averageRemainingSprintTimeMs,
+        },
         timeLeftSeconds: 0,
         isRunning: false,
       };
+      void saveSprintSession({
+        ...completedSprint,
+        date: sprintDate,
+      });
       setSavedSprints((previous) => {
         const next = [completedSprint, ...previous];
         persistSprints(next);
@@ -267,6 +468,9 @@ const Sprints = () => {
       });
       return null;
     });
+    focusReturnTime.current = null;
+    setRabbitHoles(0);
+    persistActiveSprint(null);
     setTimeLeft(DEFAULT_DURATION * 60);
   };
 
@@ -346,11 +550,11 @@ const Sprints = () => {
             <div className="sprint-live-meta">
               <div className="sprint-stat-chip">
                 <Rabbit size={16} />
-                <span>{activeSprint ? activeSprint.rabbitHoles : 0} rabbit holes</span>
+                <span>{activeSprint ? rabbitHoles : 0} rabbit holes</span>
               </div>
               <div className="sprint-stat-chip">
                 <Clock3 size={16} />
-                <span>{visibilityDebug.status}</span>
+                <span>{isDistracted ? 'User is away from the sprint tab' : visibilityDebug.status}</span>
               </div>
             </div>
           </div>
@@ -435,6 +639,15 @@ const Sprints = () => {
                 min="1"
                 value={form.durationMinutes}
                 onChange={(event) => setForm((current) => ({ ...current, durationMinutes: event.target.value }))}
+              />
+            </label>
+
+            <label className="sprint-field">
+              <span>Sprint date</span>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))}
               />
             </label>
 
@@ -536,7 +749,7 @@ const Sprints = () => {
 
             <div className="sprint-history-list">
               {savedSprints.map((sprint) => (
-                <article key={sprint.id} className="sprint-history-card">
+                <article key={sprint.id || sprint.sprintId} className="sprint-history-card">
                   <div className="sprint-history-top">
                     <div>
                       <h3>{sprint.title}</h3>
@@ -552,7 +765,7 @@ const Sprints = () => {
                     <span style={{ color: sprint.scoreStatus?.color || 'inherit' }}>
                       {sprint.scoreStatus?.label || 'Focused'}
                     </span>
-                    <span>{new Date(sprint.completedAt).toLocaleString()}</span>
+                    <span>{new Date(sprint.completedAt).toLocaleDateString()}</span>
                   </div>
                 </article>
               ))}
