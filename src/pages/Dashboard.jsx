@@ -1,8 +1,23 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-react';
+import { CalendarDays, Flame, Orbit, ShieldCheck, TimerReset } from 'lucide-react';
 import { getDailyAnalyticsHistory } from '../api/analyticsApi';
 
 const EMPTY_MESSAGE = 'No saved analytics yet. Use Add > Calculate to generate dashboard data.';
+const monthNames = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const parseRangeMinutes = (timeRange = '') => {
   const [startRaw = '', endRaw = ''] = timeRange.split('-').map((value) => value.trim());
@@ -52,6 +67,90 @@ const average = (values) =>
   values.length
     ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
     : 0;
+
+const getDateKey = (date) => date.toISOString().split('T')[0];
+
+const parseDateKey = (dateKey) => {
+  const [year, month, day] = String(dateKey)
+    .split('-')
+    .map((value) => Number(value));
+  return new Date(year, (month || 1) - 1, day || 1);
+};
+
+const getMonthDays = (year, month) => {
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingBlanks = firstDay.getDay();
+  const days = Array.from({ length: leadingBlanks }, () => null);
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    days.push(new Date(year, month, day));
+  }
+
+  return days;
+};
+
+const getUsageDateSet = (history = []) =>
+  new Set(
+    history
+      .map((item) => item.date || item.entry_date)
+      .filter(Boolean)
+  );
+
+const formatDateLabel = (date) =>
+  date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+
+const getCurrentStreak = (history = []) => {
+  const usageDates = [...getUsageDateSet(history)].sort();
+  if (usageDates.length === 0) {
+    return 0;
+  }
+
+  let streak = 1;
+
+  for (let index = usageDates.length - 1; index > 0; index -= 1) {
+    const current = parseDateKey(usageDates[index]);
+    const previous = parseDateKey(usageDates[index - 1]);
+    const diffInDays = Math.round((current - previous) / (1000 * 60 * 60 * 24));
+
+    if (diffInDays === 1) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+
+  return streak;
+};
+
+const getActiveStreakWindow = (history = []) => {
+  const usageDates = [...getUsageDateSet(history)].sort();
+  if (usageDates.length === 0) {
+    return null;
+  }
+
+  let startIndex = usageDates.length - 1;
+
+  for (let index = usageDates.length - 1; index > 0; index -= 1) {
+    const current = parseDateKey(usageDates[index]);
+    const previous = parseDateKey(usageDates[index - 1]);
+    const diffInDays = Math.round((current - previous) / (1000 * 60 * 60 * 24));
+
+    if (diffInDays === 1) {
+      startIndex = index - 1;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    start: parseDateKey(usageDates[startIndex]),
+    end: parseDateKey(usageDates[usageDates.length - 1]),
+  };
+};
 
 const normalizeHistory = (history = []) =>
   [...history]
@@ -184,6 +283,7 @@ const Dashboard = () => {
   const [showResilienceOverview, setShowResilienceOverview] = useState(false);
   const [showRabbitHoleOverview, setShowRabbitHoleOverview] = useState(false);
   const [showEscapeTimeOverview, setShowEscapeTimeOverview] = useState(false);
+  const [showStreakOverview, setShowStreakOverview] = useState(false);
   const [activeEscapeSlice, setActiveEscapeSlice] = useState('');
   const [hoveredEscapeSlice, setHoveredEscapeSlice] = useState(null);
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
@@ -192,6 +292,7 @@ const Dashboard = () => {
   const resilienceSectionRef = useRef(null);
   const rabbitHoleSectionRef = useRef(null);
   const escapeTimeSectionRef = useRef(null);
+  const streakSectionRef = useRef(null);
 
   useEffect(() => {
     const loadHistory = async () => {
@@ -220,6 +321,8 @@ const Dashboard = () => {
   const averageEscapeTime = latestDay?.averageEscapeTime ?? average(
     escapeTimeBreakdown.map((item) => item.minutes)
   );
+  const appUsageDates = useMemo(() => [...getUsageDateSet(history)].sort(), [history]);
+  const usageDateSet = useMemo(() => new Set(appUsageDates), [appUsageDates]);
   const calendarDays = useMemo(() => getMonthDays(selectedYear, selectedMonth), [selectedMonth, selectedYear]);
   const visibleUsageDates = useMemo(
     () =>
@@ -227,8 +330,10 @@ const Dashboard = () => {
         const date = parseDateKey(dateKey);
         return date.getFullYear() === selectedYear && date.getMonth() === selectedMonth;
       }),
-    [selectedMonth, selectedYear]
+    [appUsageDates, selectedMonth, selectedYear]
   );
+  const currentStreak = useMemo(() => getCurrentStreak(history), [history]);
+  const activeStreakWindow = useMemo(() => getActiveStreakWindow(history), [history]);
 
   useEffect(() => {
     if (escapeTimeBreakdown.length > 0) {
@@ -253,6 +358,12 @@ const Dashboard = () => {
       escapeTimeSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [showEscapeTimeOverview]);
+
+  useEffect(() => {
+    if (showStreakOverview && streakSectionRef.current) {
+      streakSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [showStreakOverview]);
 
   const activeEscapeSegment =
     escapeTimeBreakdown.find((segment) => segment.label === activeEscapeSlice) ??
@@ -288,6 +399,8 @@ const Dashboard = () => {
               ? () => setShowRabbitHoleOverview(true)
               : isEscapeTimeCard
                 ? () => setShowEscapeTimeOverview(true)
+                : isStreakCard
+                  ? () => setShowStreakOverview(true)
                 : undefined;
 
           return (
@@ -536,7 +649,7 @@ const Dashboard = () => {
           <div className="flex items-center gap-3">
             <div className="rounded-2xl border border-[rgba(255,138,0,0.18)] bg-[rgba(255,138,0,0.08)] px-4 py-3">
               <p className="text-xs uppercase tracking-[0.18em] text-nexora-muted">Current Streak</p>
-              <p className="mt-1 text-3xl font-semibold text-nexora-accent">9 days</p>
+              <p className="mt-1 text-3xl font-semibold text-nexora-accent">{currentStreak} days</p>
             </div>
             <div className="relative">
               <button
@@ -644,17 +757,25 @@ const Dashboard = () => {
 
               <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <p className="text-sm font-medium text-nexora-muted">Active Streak Window</p>
-                <p className="mt-3 text-lg font-semibold text-nexora-text">April 6 - April 14</p>
+                <p className="mt-3 text-lg font-semibold text-nexora-text">
+                  {activeStreakWindow
+                    ? `${formatDateLabel(activeStreakWindow.start)} - ${formatDateLabel(activeStreakWindow.end)}`
+                    : 'No streak yet'}
+                </p>
                 <p className="mt-2 text-sm text-nexora-muted">
-                  This 9-day run is highlighted on the calendar and lines up with the current dashboard streak card.
+                  {activeStreakWindow
+                    ? `This ${currentStreak}-day run is highlighted on the calendar and lines up with the current dashboard streak card.`
+                    : 'Save a day of analytics to start building a streak timeline.'}
                 </p>
               </article>
 
               <article className="rounded-2xl border border-nexora-border bg-[#202024] p-5">
                 <p className="text-sm font-medium text-nexora-muted">Next Streak Milestone</p>
-                <p className="mt-3 text-lg font-semibold text-nexora-text">1 more day to reach 10</p>
+                <p className="mt-3 text-lg font-semibold text-nexora-text">
+                  {currentStreak === 0 ? '1 saved day to start a streak' : `${Math.max(1, 10 - currentStreak)} more day${10 - currentStreak === 1 ? '' : 's'} to reach 10`}
+                </p>
                 <p className="mt-2 text-sm text-nexora-muted">
-                  If the app is used on the next active day, the current run will move from 9 to 10 consecutive days.
+                  Add analytics on the next day to keep the streak moving forward.
                 </p>
               </article>
             </div>
