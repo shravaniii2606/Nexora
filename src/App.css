@@ -126,6 +126,13 @@ button {
   color: var(--text-primary);
 }
 
+.page-subtitle {
+  margin-top: 0.75rem;
+  max-width: 640px;
+  color: var(--text-secondary);
+  font-size: 0.98rem;
+}
+
 /* Core Components */
 .panel {
   background-color: var(--panel-bg);
