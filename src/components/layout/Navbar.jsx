@@ -1,11 +1,11 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ShieldCheck, PlusCircle, Bot, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, Bot, BarChart3, TimerReset } from 'lucide-react';
 
 const Navbar = () => {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="nav-icon" /> },
-    { path: '/resilience-score', label: 'Resilience Score', icon: <ShieldCheck className="nav-icon" /> },
+    { path: '/sprints', label: 'Sprints', icon: <TimerReset className="nav-icon" /> },
     { path: '/add', label: 'Add', icon: <PlusCircle className="nav-icon" /> },
     { path: '/ai', label: 'AI', icon: <Bot className="nav-icon" /> },
     { path: '/analytics', label: 'Analytics', icon: <BarChart3 className="nav-icon" /> },
